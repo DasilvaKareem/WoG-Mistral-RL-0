@@ -31,7 +31,8 @@ _last_gold: int | None = None
 def _default_memory() -> dict:
     return {
         "facts": {},
-        "quests": {"completed": [], "active": [], "available": []},
+        "quests": {"completed": [], "active": [], "active_detail": {}, "available": [],
+                   "completion_times": []},
         "zones": {},
         "zone_history": [],          # chronological list of zone visits
         "strategies": [],
@@ -46,6 +47,7 @@ def _default_memory() -> dict:
             "total_quests_gold": 0,
             "total_zone_transitions": 0,
             "zone_visit_counts": {},   # {zone_id: visit_count}
+            "quest_completion_times": [],  # list of seconds per quest
             "sessions": 0,
             "first_seen": datetime.now().isoformat(),
         },
@@ -94,6 +96,15 @@ def memory_to_prompt(mem: dict) -> str:
         lines.append(f"\n### Completed Quests ({len(quests['completed'])} total)")
         for q in quests["completed"][-5:]:
             lines.append(f"- {q}")
+
+    # Quest performance
+    completion_times = mem.get("stats", {}).get("quest_completion_times", [])
+    if completion_times:
+        avg_time = sum(completion_times) / len(completion_times)
+        fastest = min(completion_times)
+        lines.append(f"\n### Quest Performance")
+        lines.append(f"- Avg completion: {avg_time:.0f}s | Fastest: {fastest:.0f}s | "
+                     f"Total completed: {len(quests.get('completed', []))}")
 
     # Zones
     if mem.get("zones"):
@@ -329,6 +340,18 @@ def extract_from_travel(mem: dict, tool_name: str, result: dict) -> None:
     save_memory(mem)
 
 
+MAX_QUEST_COMPLETION_TIMES = 50
+
+
+def _parse_quest_difficulty(result: dict) -> str | None:
+    """Extract difficulty from a quest result using common field names."""
+    for key in ("difficulty", "level", "minLevel", "recommendedLevel", "tier", "rank"):
+        val = result.get(key)
+        if val is not None:
+            return str(val)
+    return None
+
+
 def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
     """Update memory from quest tool results."""
     try:
@@ -337,27 +360,60 @@ def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
         return
 
     timestamp = datetime.now().strftime("%H:%M")
+    now_iso = datetime.now().isoformat()
+
+    # Ensure active_detail and completion_times exist (migration for old memories)
+    mem["quests"].setdefault("active_detail", {})
+    mem["quests"].setdefault("completion_times", [])
+    mem["stats"].setdefault("quest_completion_times", [])
 
     if tool_name == "quests_accept" and isinstance(result, dict):
         quest_name = result.get("questId") or result.get("name") or "unknown quest"
-        # Store richer quest data if available
-        quest_entry = quest_name
+        difficulty = _parse_quest_difficulty(result)
         objectives = result.get("objectives") or result.get("description")
         rewards = result.get("rewards") or result.get("reward")
-        if objectives or rewards:
-            parts = [quest_name]
-            if objectives:
-                parts.append(f"obj: {objectives}" if isinstance(objectives, str) else f"obj: {json.dumps(objectives)}")
-            if rewards:
-                parts.append(f"rewards: {rewards}" if isinstance(rewards, str) else f"rewards: {json.dumps(rewards)}")
+
+        # Store rich detail for timing + difficulty tracking
+        mem["quests"]["active_detail"][quest_name] = {
+            "accepted_at": now_iso,
+            "difficulty": difficulty,
+            "objectives": objectives[:100] if isinstance(objectives, str) else objectives,
+            "rewards": rewards,
+            "zone": mem.get("facts", {}).get("zone"),
+        }
+
+        # Human-readable active list for the prompt
+        quest_entry = quest_name
+        parts = [quest_name]
+        if difficulty:
+            parts.append(f"diff: {difficulty}")
+        if objectives:
+            parts.append(f"obj: {objectives}" if isinstance(objectives, str) else f"obj: {json.dumps(objectives)}")
+        if rewards:
+            parts.append(f"rewards: {rewards}" if isinstance(rewards, str) else f"rewards: {json.dumps(rewards)}")
+        if len(parts) > 1:
             quest_entry = " | ".join(parts)
-        if quest_entry not in mem["quests"]["active"]:
+        if not any(q.startswith(quest_name) for q in mem["quests"]["active"]):
             mem["quests"]["active"].append(quest_entry)
         mem["journal"].append(f"[{timestamp}] Accepted quest: {quest_entry}")
 
     elif tool_name == "quests_complete" and isinstance(result, dict):
         quest_name = result.get("questId") or result.get("name") or "unknown quest"
-        # Remove from active (match on quest ID prefix)
+
+        # Compute time-to-complete
+        detail = mem["quests"]["active_detail"].pop(quest_name, None)
+        time_to_complete_s = None
+        difficulty = _parse_quest_difficulty(result)
+        if detail:
+            try:
+                accepted_at = datetime.fromisoformat(detail["accepted_at"])
+                time_to_complete_s = (datetime.now() - accepted_at).total_seconds()
+            except (ValueError, TypeError):
+                pass
+            if not difficulty:
+                difficulty = detail.get("difficulty")
+
+        # Remove from active display list
         mem["quests"]["active"] = [
             q for q in mem["quests"]["active"]
             if not q.startswith(quest_name)
@@ -375,15 +431,34 @@ def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
             mem["stats"]["total_gold_earned"] = mem["stats"].get("total_gold_earned", 0) + gold_reward
             mem["stats"]["total_quests_gold"] = mem["stats"].get("total_quests_gold", 0) + gold_reward
 
+        # Record completion with timing + difficulty
+        completion_record = {
+            "quest": quest_name,
+            "completed_at": now_iso,
+            "difficulty": difficulty,
+            "xp_reward": xp_reward,
+            "gold_reward": gold_reward,
+            "zone": mem.get("facts", {}).get("zone"),
+        }
+        if time_to_complete_s is not None:
+            completion_record["time_to_complete_s"] = round(time_to_complete_s, 1)
+            mem["stats"]["quest_completion_times"].append(round(time_to_complete_s, 1))
+            mem["stats"]["quest_completion_times"] = mem["stats"]["quest_completion_times"][-MAX_QUEST_COMPLETION_TIMES:]
+        mem["quests"]["completion_times"].append(completion_record)
+        mem["quests"]["completion_times"] = mem["quests"]["completion_times"][-MAX_QUEST_COMPLETION_TIMES:]
+
+        # Journal
         reward_str = ""
         if xp_reward:
             reward_str += f" +{xp_reward} XP"
         if gold_reward:
             reward_str += f" +{gold_reward} gold"
-        mem["journal"].append(f"[{timestamp}] Completed quest: {quest_name}{reward_str}")
+        time_str = f" in {time_to_complete_s:.0f}s" if time_to_complete_s else ""
+        diff_str = f" [diff={difficulty}]" if difficulty else ""
+        mem["journal"].append(f"[{timestamp}] Completed quest: {quest_name}{diff_str}{time_str}{reward_str}")
 
     elif tool_name == "quests_list" and isinstance(result, (dict, list)):
-        # Track available quests so the agent knows what's out there
+        # Track available quests with difficulty
         quests_list = result if isinstance(result, list) else result.get("quests", result.get("available", []))
         if isinstance(quests_list, list):
             available = []
@@ -392,10 +467,13 @@ def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
                     qid = q.get("questId") or q.get("id") or q.get("name") or "?"
                     desc = q.get("description", "")[:60]
                     level = q.get("level") or q.get("minLevel")
+                    difficulty = _parse_quest_difficulty(q)
                     entry = qid
+                    if difficulty:
+                        entry += f" [diff={difficulty}]"
                     if desc:
                         entry += f": {desc}"
-                    if level:
+                    if level and not difficulty:
                         entry += f" (L{level}+)"
                     available.append(entry)
                 elif isinstance(q, str):
@@ -420,6 +498,7 @@ def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
             q for q in mem["quests"]["active"]
             if not q.startswith(quest_name)
         ]
+        mem["quests"]["active_detail"].pop(quest_name, None)
         mem["journal"].append(f"[{timestamp}] Abandoned quest: {quest_name}")
 
     mem["journal"] = mem["journal"][-MAX_JOURNAL:]

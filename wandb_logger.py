@@ -73,6 +73,10 @@ def log_cycle(
         "gameplay/quests_available": len(mem.get("quests", {}).get("available", [])),
         "gameplay/quest_xp": stats.get("total_quests_xp", 0),
         "gameplay/quest_gold": stats.get("total_quests_gold", 0),
+        # Quest timing
+        "quests/avg_completion_time_s": _avg(stats.get("quest_completion_times", [])),
+        "quests/fastest_completion_s": min(stats.get("quest_completion_times", [0])) or 0,
+        "quests/total_timed_completions": len(stats.get("quest_completion_times", [])),
         # Movement
         "movement/current_zone": current_zone,
         "movement/total_transitions": stats.get("total_zone_transitions", 0),
@@ -212,6 +216,8 @@ def finish(mem: dict) -> None:
             "zone_transitions": stats.get("total_zone_transitions", 0),
             "zones_discovered": len(stats.get("zone_visit_counts", {})),
             "zone_visit_counts": stats.get("zone_visit_counts", {}),
+            "avg_quest_completion_time_s": _avg(stats.get("quest_completion_times", [])),
+            "quest_completion_times": stats.get("quest_completion_times", []),
             "sessions": stats.get("sessions", 0),
             "tool_calls": dict(_tool_counts),
             "zone_time": dict(_zone_counts),
@@ -220,6 +226,11 @@ def finish(mem: dict) -> None:
         print("[wandb] Run finished.")
     except Exception as e:
         print(f"[wandb] Error finishing run: {e}")
+
+
+def _avg(lst: list) -> float:
+    """Safe average of a list of numbers."""
+    return sum(lst) / len(lst) if lst else 0.0
 
 
 def _parse_gold(val) -> float:

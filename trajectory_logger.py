@@ -60,6 +60,7 @@ class TrajectoryLogger:
         quests_completed: int = 0,
         zones_discovered: int = 0,
         zone: str | None = None,
+        quest_completion_times: list[float] | None = None,
     ) -> None:
         """Start recording a cycle. Call before inference."""
         self._current = {
@@ -71,6 +72,7 @@ class TrajectoryLogger:
             "quests_completed_before": quests_completed,
             "zones_discovered_before": zones_discovered,
             "zone_before": zone,
+            "quest_completion_times_before": list(quest_completion_times or []),
         }
 
     def end_cycle(
@@ -86,12 +88,19 @@ class TrajectoryLogger:
         quests_completed: int = 0,
         zones_discovered: int = 0,
         zone: str | None = None,
+        quest_completion_times: list[float] | None = None,
     ) -> None:
         """Finish recording a cycle. Call after tool execution."""
         if self._current is None:
             return
 
         before = self._current["stats_before"]
+        times_after = list(quest_completion_times or [])
+        times_before = self._current["quest_completion_times_before"]
+
+        # If a quest was completed this cycle, capture its completion time
+        new_times = times_after[len(times_before):]
+        last_quest_time_s = new_times[-1] if new_times else None
 
         # Full reward signals — every metric we track
         reward_signals = {
@@ -104,6 +113,7 @@ class TrajectoryLogger:
             "quests_completed_delta": quests_completed - self._current["quests_completed_before"],
             "quest_gold_delta": stats_after.get("total_quests_gold", 0) - before.get("total_quests_gold", 0),
             "quest_xp_delta": stats_after.get("total_quests_xp", 0) - before.get("total_quests_xp", 0),
+            "quest_completion_time_s": last_quest_time_s,
             # Exploration
             "zones_discovered_delta": zones_discovered - self._current["zones_discovered_before"],
             "zone_transitions_delta": (

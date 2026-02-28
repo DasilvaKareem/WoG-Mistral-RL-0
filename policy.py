@@ -216,6 +216,38 @@ class PolicyEvaluator:
         zone_history = mem.get("zone_history", [])[-5:]
         movement_path = " -> ".join(zh["zone"] for zh in zone_history) if zone_history else "(no movement)"
 
+        # Quest efficiency
+        quest_times = mem.get("stats", {}).get("quest_completion_times", [])
+        if quest_times:
+            avg_qt = sum(quest_times) / len(quest_times)
+            quest_perf_line = f"Quest efficiency: avg {avg_qt:.0f}s, fastest {min(quest_times):.0f}s, {len(quest_times)} timed completions\n"
+        else:
+            quest_perf_line = "Quest efficiency: no timed completions yet\n"
+
+        # Recent quest completions with difficulty + timing
+        recent_completions = mem.get("quests", {}).get("completion_times", [])[-3:]
+        if recent_completions:
+            comp_lines = []
+            for c in recent_completions:
+                t = c.get("time_to_complete_s")
+                d = c.get("difficulty")
+                parts = [c.get("quest", "?")]
+                if d:
+                    parts.append(f"diff={d}")
+                if t:
+                    parts.append(f"{t:.0f}s")
+                r = []
+                if c.get("xp_reward"):
+                    r.append(f"+{c['xp_reward']}xp")
+                if c.get("gold_reward"):
+                    r.append(f"+{c['gold_reward']}g")
+                if r:
+                    parts.append(" ".join(r))
+                comp_lines.append("  " + " | ".join(parts))
+            quest_history_block = "Recent quest completions:\n" + "\n".join(comp_lines) + "\n"
+        else:
+            quest_history_block = ""
+
         return (
             "You are a gameplay strategy optimizer for a fantasy MMORPG agent.\n"
             f"Cycle: {cycle}\n\n"
@@ -227,11 +259,13 @@ class PolicyEvaluator:
             f"- Quests completed: {deltas['quests_delta']}\n"
             f"- New zones discovered: {deltas.get('zones_discovered_delta', 0)}\n"
             f"- Zone transitions: {deltas.get('zone_transitions_delta', 0)}\n"
-            f"{ema_line}\n"
+            f"{ema_line}"
+            f"{quest_perf_line}\n"
             f"Character state:\n{char_block}\n\n"
             f"Top tool usage: {tool_lines}\n"
             f"Top zones by time: {zone_lines}\n"
             f"Recent movement: {movement_path}\n\n"
+            f"{quest_history_block}"
             f"Recent journal:\n{journal_block}\n\n"
             f"Recent strategy history:\n{hist_block}\n\n"
             f"Current strategy:\n{current_strategy}\n\n"

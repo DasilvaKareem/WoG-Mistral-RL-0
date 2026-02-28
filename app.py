@@ -479,6 +479,7 @@ async def main():
                         quests_completed=len(mem.get("quests", {}).get("completed", [])),
                         zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
                         zone=mem.get("facts", {}).get("zone"),
+                        quest_completion_times=mem.get("stats", {}).get("quest_completion_times", []),
                     )
 
                     t0 = time.time()
@@ -577,6 +578,7 @@ async def main():
                         quests_completed=len(mem.get("quests", {}).get("completed", [])),
                         zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
                         zone=mem.get("facts", {}).get("zone"),
+                        quest_completion_times=mem.get("stats", {}).get("quest_completion_times", []),
                     )
 
                     # Sync zone_id when agent travels so future tool calls use the right zone
