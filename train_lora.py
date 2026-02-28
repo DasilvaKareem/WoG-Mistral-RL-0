@@ -138,18 +138,23 @@ def main():
         "--steps-per-eval", str(args.steps_per_eval),
         "--steps-per-report", str(args.steps_per_report),
         "--save-every", str(args.save_every),
+        "--report-to", "wandb",
+        "--project-name", "wog-agent",
         "-c", config_path,
     ]
 
     print(f"\nRunning: {' '.join(cmd)}\n")
 
-    # Run training and parse output in real-time
+    # Run training with unbuffered output
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=env,
     )
 
     best_val_loss = float("inf")

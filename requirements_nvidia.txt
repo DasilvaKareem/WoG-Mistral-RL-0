@@ -1,0 +1,13 @@
+torch
+transformers
+peft
+bitsandbytes
+accelerate
+datasets
+mcp[cli]
+eth-account
+httpx
+wandb
+weave
+wandb-workspaces
+huggingface_hub
