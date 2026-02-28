@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import signal
 import time
 
 from eth_account import Account
@@ -410,6 +411,41 @@ async def main():
             print("=" * 60)
             print()
 
+            # ── Shutdown helper — always logout, no matter how we exit ──
+            async def shutdown(reason: str = "unknown"):
+                """Logout character, save memory, close loggers. Safe to call multiple times."""
+                if getattr(shutdown, "_done", False):
+                    return
+                shutdown._done = True
+                print(f"\nShutting down agent ({reason})...")
+                save_memory(mem)
+                print(f"Memory saved ({len(mem['journal'])} journal entries).")
+                traj_logger.close()
+                wandb_logger.finish(mem)
+                try:
+                    await mcp.call_tool("character_logout", {
+                        "sessionId": session_id,
+                        "entityId": entity_id,
+                        "zoneId": zone_id,
+                    })
+                    print("Character logged out from shard.")
+                except Exception as e:
+                    print(f"Logout failed: {e} — trying HTTP fallback...")
+                    # Fallback: hit the shard REST API directly
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as hc:
+                            await hc.post(f"{SHARD_URL}/agent/undeploy", json={
+                                "walletAddress": wallet.address,
+                            }, headers={"Authorization": f"Bearer {token}"})
+                        print("Agent undeployed via HTTP fallback.")
+                    except Exception:
+                        print("HTTP fallback also failed — agent may remain on shard until timeout.")
+
+            # Wire up OS signals so kill/SIGTERM also triggers logout
+            loop = asyncio.get_event_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, lambda s=sig: asyncio.ensure_future(shutdown(f"signal {s.name}")))
+
             # ── Step 6: Autonomous game loop ──
             messages: list[dict] = [{"role": "system", "content": rebuild_system_prompt()}]
 
@@ -427,15 +463,15 @@ async def main():
             # Refresh system prompt with latest memory every N cycles
             MEMORY_REFRESH_INTERVAL = 10
 
-            while True:
-                cycle += 1
-                messages = trim_history(messages)
+            try:
+                while True:
+                    cycle += 1
+                    messages = trim_history(messages)
 
-                # Periodically refresh system prompt with latest memory
-                if cycle % MEMORY_REFRESH_INTERVAL == 0:
-                    messages[0] = {"role": "system", "content": rebuild_system_prompt()}
+                    # Periodically refresh system prompt with latest memory
+                    if cycle % MEMORY_REFRESH_INTERVAL == 0:
+                        messages[0] = {"role": "system", "content": rebuild_system_prompt()}
 
-                try:
                     prompt = build_prompt(messages)
                     stats_before = dict(mem.get("stats", {}))
                     traj_logger.begin_cycle(cycle, messages, prompt, stats_before)
@@ -585,30 +621,16 @@ async def main():
 
                     await asyncio.sleep(TICK_INTERVAL)
 
-                except KeyboardInterrupt:
-                    print("\nShutting down agent...")
-                    # Save final memory
-                    save_memory(mem)
-                    print(f"Memory saved ({len(mem['journal'])} journal entries).")
-                    traj_logger.close()
-                    wandb_logger.finish(mem)
-                    # Try to logout gracefully
-                    try:
-                        await mcp.call_tool("character_logout", {
-                            "sessionId": session_id,
-                            "entityId": entity_id,
-                            "zoneId": zone_id,
-                        })
-                        print("Character saved and logged out.")
-                    except Exception:
-                        pass
-                    break
-
-                except Exception as e:
-                    print(f"[cycle {cycle}] Unexpected error: {e}")
-                    wandb_logger.log_error(cycle, type(e).__name__, str(e))
-                    save_memory(mem)
-                    await asyncio.sleep(10)
+            except KeyboardInterrupt:
+                await shutdown("Ctrl+C")
+            except Exception as e:
+                print(f"[cycle {cycle}] Fatal error: {e}")
+                wandb_logger.log_error(cycle, type(e).__name__, str(e))
+                await shutdown(f"crash: {e}")
+                raise
+            finally:
+                # Catch-all: if nothing above triggered shutdown yet, do it now
+                await shutdown("process exit")
 
 
 if __name__ == "__main__":
