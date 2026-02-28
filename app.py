@@ -21,12 +21,15 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp import ClientSession
 import httpx
 
+import weave
+
 from memory import (
     load_memory, save_memory, memory_to_prompt,
     process_tool_result, handle_remember_command,
 )
 import wandb_logger
 from policy import PolicyEvaluator, get_current_strategy
+from trajectory_logger import TrajectoryLogger
 
 MODEL_ID = "mlx-community/Hermes-2-Pro-Mistral-7B-8bit"
 MCP_URL = "https://ips-latter-step-socket.trycloudflare.com/mcp"
@@ -111,7 +114,7 @@ async def authenticate(wallet: Account) -> str:
 
 async def register_and_deploy(wallet: Account, token: str) -> dict:
     """Register wallet, create character if needed, and deploy agent."""
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         headers = {"Authorization": f"Bearer {token}"}
 
         # Register wallet (idempotent — gives sFUEL + welcome gold)
@@ -211,6 +214,7 @@ def format_tools_for_prompt(tools: list) -> str:
     return json.dumps(tool_defs, separators=(",", ":"))
 
 
+@weave.op()
 def parse_tool_call(text: str) -> dict | None:
     """Extract a tool call JSON block from model output.
     Tries <tool_call> tags first, then falls back to bare JSON with 'name' key."""
@@ -259,6 +263,7 @@ def truncate_response(text: str) -> str:
     return text[:MAX_RESPONSE_CHARS] + "...(truncated)"
 
 
+@weave.op()
 def build_prompt(messages: list[dict]) -> str:
     """Build a ChatML prompt from a list of {role, content} messages."""
     parts = []
@@ -389,6 +394,11 @@ async def main():
                 "wallet": wallet.address,
                 "session": mem["stats"].get("sessions", 0),
             })
+
+            # ── Weave tracing + trajectory logging ──
+            weave.init("wog-agent")
+            traj_logger = TrajectoryLogger()
+
             print("=" * 60)
             print("  WoG Agent is LIVE — running autonomously 24/7")
             print(f"  Wallet:  {wallet.address}")
@@ -427,6 +437,9 @@ async def main():
 
                 try:
                     prompt = build_prompt(messages)
+                    stats_before = dict(mem.get("stats", {}))
+                    traj_logger.begin_cycle(cycle, messages, prompt, stats_before)
+
                     t0 = time.time()
                     response = generate(
                         model,
@@ -510,6 +523,23 @@ async def main():
                     # Auto-extract memory from tool results (uses full text)
                     process_tool_result(mem, name, result_text)
 
+                    # Log trajectory for fine-tuning
+                    traj_logger.end_cycle(
+                        response=response,
+                        tool_call=tool_call,
+                        tool_name=name,
+                        tool_args=args,
+                        tool_result=result_text,
+                        tool_success=consecutive_errors == 0,
+                        stats_after=dict(mem.get("stats", {})),
+                        inference_time=inference_time,
+                    )
+
+                    # Sync zone_id when agent travels so future tool calls use the right zone
+                    new_zone = mem.get("facts", {}).get("zone")
+                    if new_zone and new_zone != zone_id:
+                        zone_id = new_zone
+
                     # Truncate before feeding back to model
                     truncated = truncate_response(result_text)
 
@@ -532,6 +562,7 @@ async def main():
                     old_strategy = get_current_strategy(mem)
                     new_strategy = policy_evaluator.maybe_update(
                         cycle, mem, model, tokenizer,
+                        tool_counts=dict(wandb_logger._tool_counts),
                     )
                     if new_strategy:
                         wandb_logger.log_policy_update(
@@ -540,6 +571,8 @@ async def main():
                             new_strategy,
                             getattr(policy_evaluator, "last_deltas", {}),
                             getattr(policy_evaluator, "last_improvement_score", 0.0),
+                            ema_score=getattr(policy_evaluator, "last_ema_score", 0.0),
+                            action=getattr(policy_evaluator, "last_action", "adopted"),
                         )
                         save_memory(mem)
                         messages[0] = {"role": "system", "content": rebuild_system_prompt()}
@@ -557,6 +590,7 @@ async def main():
                     # Save final memory
                     save_memory(mem)
                     print(f"Memory saved ({len(mem['journal'])} journal entries).")
+                    traj_logger.close()
                     wandb_logger.finish(mem)
                     # Try to logout gracefully
                     try:

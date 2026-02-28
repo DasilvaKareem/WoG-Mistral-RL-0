@@ -15,6 +15,7 @@ except ImportError:
 
 _run = None
 _tool_counts: Counter = Counter()
+_zone_counts: Counter = Counter()
 
 
 def init_run(config: dict) -> None:
@@ -56,6 +57,10 @@ def log_cycle(
     if tool_name:
         _tool_counts[tool_name] += 1
 
+    # Track zone occupancy
+    current_zone = facts.get("zone") or "unknown"
+    _zone_counts[current_zone] += 1
+
     metrics = {
         # Gameplay
         "gameplay/total_kills": stats.get("total_kills", 0),
@@ -65,6 +70,13 @@ def log_cycle(
         "gameplay/gold_balance": _parse_gold(facts.get("gold")),
         "gameplay/quests_completed": len(mem.get("quests", {}).get("completed", [])),
         "gameplay/quests_active": len(mem.get("quests", {}).get("active", [])),
+        "gameplay/quests_available": len(mem.get("quests", {}).get("available", [])),
+        "gameplay/quest_xp": stats.get("total_quests_xp", 0),
+        "gameplay/quest_gold": stats.get("total_quests_gold", 0),
+        # Movement
+        "movement/current_zone": current_zone,
+        "movement/total_transitions": stats.get("total_zone_transitions", 0),
+        "movement/zones_discovered": len(stats.get("zone_visit_counts", {})),
         # System
         "system/inference_time_s": inference_time_s,
         "system/context_length": context_length,
@@ -81,9 +93,12 @@ def log_cycle(
     except Exception:
         pass
 
-    # Log tool distribution bar chart every 50 cycles
-    if cycle % 50 == 0 and _tool_counts:
-        _log_tool_distribution(cycle)
+    # Log distribution charts every 50 cycles
+    if cycle % 50 == 0:
+        if _tool_counts:
+            _log_tool_distribution(cycle)
+        if _zone_counts:
+            _log_zone_distribution(cycle)
 
 
 def _log_tool_distribution(cycle: int) -> None:
@@ -103,12 +118,31 @@ def _log_tool_distribution(cycle: int) -> None:
         pass
 
 
+def _log_zone_distribution(cycle: int) -> None:
+    """Log zone time distribution as a W&B bar chart."""
+    if _run is None:
+        return
+    try:
+        table = wandb.Table(columns=["zone", "cycles_spent"], data=[
+            [zone, count] for zone, count in _zone_counts.most_common(20)
+        ])
+        _run.log({
+            "movement/zone_distribution": wandb.plot.bar(
+                table, "zone", "cycles_spent", title=f"Zone occupancy (cycle {cycle})"
+            ),
+        }, step=cycle)
+    except Exception:
+        pass
+
+
 def log_policy_update(
     cycle: int,
     old_strategy: str,
     new_strategy: str,
     performance_snapshot: dict,
     improvement_score: float,
+    ema_score: float = 0.0,
+    action: str = "adopted",
 ) -> None:
     """Log a policy rewrite event with old/new strategy text and perf deltas."""
     if _run is None:
@@ -117,12 +151,15 @@ def log_policy_update(
         _run.log({
             "policy/improvement_score": improvement_score,
             "policy/update_cycle": cycle,
+            "policy/ema_score": ema_score,
+            "policy/action": action,
         }, step=cycle)
 
         table = wandb.Table(columns=[
             "cycle", "old_strategy", "new_strategy",
             "gold_delta", "xp_delta", "kills_delta", "deaths_delta",
-            "quests_delta", "improvement_score",
+            "quests_delta", "zones_discovered_delta", "zone_transitions_delta",
+            "improvement_score", "ema_score", "action",
         ])
         table.add_data(
             cycle,
@@ -133,7 +170,11 @@ def log_policy_update(
             performance_snapshot.get("kills_delta", 0),
             performance_snapshot.get("deaths_delta", 0),
             performance_snapshot.get("quests_delta", 0),
+            performance_snapshot.get("zones_discovered_delta", 0),
+            performance_snapshot.get("zone_transitions_delta", 0),
             improvement_score,
+            ema_score,
+            action,
         )
         _run.log({"policy/history": table}, step=cycle)
     except Exception:
@@ -166,8 +207,14 @@ def finish(mem: dict) -> None:
             "total_xp": stats.get("total_xp", 0),
             "total_gold_earned": stats.get("total_gold_earned", 0),
             "quests_completed": len(mem.get("quests", {}).get("completed", [])),
+            "quest_xp": stats.get("total_quests_xp", 0),
+            "quest_gold": stats.get("total_quests_gold", 0),
+            "zone_transitions": stats.get("total_zone_transitions", 0),
+            "zones_discovered": len(stats.get("zone_visit_counts", {})),
+            "zone_visit_counts": stats.get("zone_visit_counts", {}),
             "sessions": stats.get("sessions", 0),
             "tool_calls": dict(_tool_counts),
+            "zone_time": dict(_zone_counts),
         })
         _run.finish()
         print("[wandb] Run finished.")
