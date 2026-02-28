@@ -474,7 +474,12 @@ async def main():
 
                     prompt = build_prompt(messages)
                     stats_before = dict(mem.get("stats", {}))
-                    traj_logger.begin_cycle(cycle, messages, prompt, stats_before)
+                    traj_logger.begin_cycle(
+                        cycle, messages, prompt, stats_before,
+                        quests_completed=len(mem.get("quests", {}).get("completed", [])),
+                        zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
+                        zone=mem.get("facts", {}).get("zone"),
+                    )
 
                     t0 = time.time()
                     response = generate(
@@ -569,6 +574,9 @@ async def main():
                         tool_success=consecutive_errors == 0,
                         stats_after=dict(mem.get("stats", {})),
                         inference_time=inference_time,
+                        quests_completed=len(mem.get("quests", {}).get("completed", [])),
+                        zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
+                        zone=mem.get("facts", {}).get("zone"),
                     )
 
                     # Sync zone_id when agent travels so future tool calls use the right zone

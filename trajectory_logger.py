@@ -4,7 +4,7 @@ Trajectory logger for fine-tuning data collection.
 Captures every game loop cycle as a training example:
   - Input: full ChatML prompt (system + history)
   - Output: model response, parsed tool call, MCP result
-  - Reward signals: gold/XP/kills/deaths deltas
+  - Reward signals: all stat deltas + composite reward score
   - Writes JSONL to data/raw/traj_<timestamp>.jsonl
 """
 
@@ -12,6 +12,29 @@ import json
 import os
 import time
 from datetime import datetime
+
+# Reward weights — mirrored from policy.py so trajectories use the same scoring
+REWARD_WEIGHT_GOLD = 3.0
+REWARD_WEIGHT_QUESTS = 50.0
+REWARD_WEIGHT_XP = 0.1
+REWARD_WEIGHT_DEATHS = -10.0
+REWARD_WEIGHT_EXPLORATION = 5.0
+REWARD_WEIGHT_QUEST_GOLD = 3.0
+REWARD_WEIGHT_QUEST_XP = 0.1
+
+
+def compute_reward(signals: dict) -> float:
+    """Compute a scalar reward from all reward signals.
+    Same weights as policy._compute_score so RL and SFT agree on what's good."""
+    return (
+        signals.get("gold_delta", 0) * REWARD_WEIGHT_GOLD
+        + signals.get("quests_completed_delta", 0) * REWARD_WEIGHT_QUESTS
+        + signals.get("xp_delta", 0) * REWARD_WEIGHT_XP
+        + signals.get("deaths_delta", 0) * REWARD_WEIGHT_DEATHS
+        + signals.get("zones_discovered_delta", 0) * REWARD_WEIGHT_EXPLORATION
+        + signals.get("quest_gold_delta", 0) * REWARD_WEIGHT_QUEST_GOLD
+        + signals.get("quest_xp_delta", 0) * REWARD_WEIGHT_QUEST_XP
+    )
 
 
 class TrajectoryLogger:
@@ -34,6 +57,9 @@ class TrajectoryLogger:
         messages: list[dict],
         prompt: str,
         stats_snapshot: dict,
+        quests_completed: int = 0,
+        zones_discovered: int = 0,
+        zone: str | None = None,
     ) -> None:
         """Start recording a cycle. Call before inference."""
         self._current = {
@@ -42,6 +68,9 @@ class TrajectoryLogger:
             "messages": messages.copy(),
             "prompt": prompt,
             "stats_before": stats_snapshot.copy(),
+            "quests_completed_before": quests_completed,
+            "zones_discovered_before": zones_discovered,
+            "zone_before": zone,
         }
 
     def end_cycle(
@@ -54,12 +83,40 @@ class TrajectoryLogger:
         tool_success: bool,
         stats_after: dict,
         inference_time: float,
+        quests_completed: int = 0,
+        zones_discovered: int = 0,
+        zone: str | None = None,
     ) -> None:
         """Finish recording a cycle. Call after tool execution."""
         if self._current is None:
             return
 
         before = self._current["stats_before"]
+
+        # Full reward signals — every metric we track
+        reward_signals = {
+            # Combat
+            "gold_delta": stats_after.get("total_gold_earned", 0) - before.get("total_gold_earned", 0),
+            "xp_delta": stats_after.get("total_xp", 0) - before.get("total_xp", 0),
+            "kills_delta": stats_after.get("total_kills", 0) - before.get("total_kills", 0),
+            "deaths_delta": stats_after.get("total_deaths", 0) - before.get("total_deaths", 0),
+            # Quests
+            "quests_completed_delta": quests_completed - self._current["quests_completed_before"],
+            "quest_gold_delta": stats_after.get("total_quests_gold", 0) - before.get("total_quests_gold", 0),
+            "quest_xp_delta": stats_after.get("total_quests_xp", 0) - before.get("total_quests_xp", 0),
+            # Exploration
+            "zones_discovered_delta": zones_discovered - self._current["zones_discovered_before"],
+            "zone_transitions_delta": (
+                stats_after.get("total_zone_transitions", 0) - before.get("total_zone_transitions", 0)
+            ),
+            # Context
+            "zone_before": self._current["zone_before"],
+            "zone_after": zone,
+        }
+
+        # Composite scalar reward
+        reward = compute_reward(reward_signals)
+
         record = {
             "cycle": self._current["cycle"],
             "timestamp": self._current["timestamp"],
@@ -72,12 +129,8 @@ class TrajectoryLogger:
             "tool_result": tool_result,
             "tool_success": tool_success,
             "inference_time": inference_time,
-            "reward_signals": {
-                "gold_delta": stats_after.get("total_gold_earned", 0) - before.get("total_gold_earned", 0),
-                "xp_delta": stats_after.get("total_xp", 0) - before.get("total_xp", 0),
-                "kills_delta": stats_after.get("total_kills", 0) - before.get("total_kills", 0),
-                "deaths_delta": stats_after.get("total_deaths", 0) - before.get("total_deaths", 0),
-            },
+            "reward_signals": reward_signals,
+            "reward": reward,
             "stats_before": before,
             "stats_after": stats_after.copy(),
         }
