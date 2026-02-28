@@ -1,0 +1,5 @@
+mlx-lm
+mcp[cli]
+eth-account
+httpx
+wandb
