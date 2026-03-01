@@ -28,6 +28,7 @@ Persistent volume keeps per-agent wallet + memory alive across runs.
 import os
 import shutil
 import subprocess
+import time
 
 import modal
 
@@ -124,9 +125,17 @@ def run_agent(agent_id: int = 0):
         env=env,
     )
 
+    SYNC_INTERVAL = 1800  # sync trajectories to volume every 30 minutes
+    last_sync = time.time()
+
     try:
         for line in iter(proc.stdout.readline, ""):  # type: ignore[union-attr]
             print(f"[agent-{agent_id}] {line}", end="", flush=True)
+            now = time.time()
+            if now - last_sync >= SYNC_INTERVAL:
+                _save(agent_id)
+                print(f"[agent-{agent_id}] [volume] periodic sync done")
+                last_sync = now
     finally:
         proc.wait()
         _save(agent_id)
