@@ -232,6 +232,80 @@ def run_training(epochs: int = 3, lr: float = 1e-5, lora_rank: int = 8):
                 print(f"[firebase] Upload failed (adapter safe in volume): {e}")
 
 
+# ── Policy optimization ─────────────────────────────────────────────────────
+@app.function(
+    gpu="H100",
+    timeout=43200,
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
+)
+def run_policy(epochs: int = 3, lr: float = 5e-6, lora_rank: int = 16):
+    """Reward-weighted policy optimization on collected trajectories."""
+    import torch
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+    subprocess.run(["git", "clone",
+        "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
+    os.chdir("/app")
+
+    # Download train/valid from Firebase
+    import json as _json
+    import firebase_admin
+    from firebase_admin import credentials, storage as fb_storage
+    sa = _json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"])
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(
+            credentials.Certificate(sa),
+            {"storageBucket": os.environ["FIREBASE_STORAGE_BUCKET"]},
+        )
+    bucket = fb_storage.bucket()
+    os.makedirs("/app/data", exist_ok=True)
+    for fname in ["train.jsonl", "valid.jsonl"]:
+        bucket.blob(fname).download_to_filename(f"/app/data/{fname}")
+        lines = sum(1 for _ in open(f"/app/data/{fname}"))
+        print(f"[firebase] downloaded {fname} — {lines} records")
+
+    proc = subprocess.Popen(
+        [
+            "python", "train_policy_nvidia.py",
+            "--epochs", str(epochs),
+            "--lr", str(lr),
+            "--lora-rank", str(lora_rank),
+            "--load-in-4bit",
+            "--data", "data",
+            "--output-dir", "adapters/policy",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd="/app",
+    )
+
+    try:
+        for line in iter(proc.stdout.readline, ""):  # type: ignore[union-attr]
+            print(line, end="", flush=True)
+    finally:
+        proc.wait()
+        adapter_src = "/app/adapters/policy"
+        if os.path.exists(adapter_src):
+            # Save to volume
+            subprocess.run(["rsync", "-a", adapter_src + "/", "/data/adapters/policy/"], check=False)
+            volume.commit()
+            print("[volume] saved policy adapter")
+
+            # Upload to Firebase
+            try:
+                for root, _, files in os.walk(adapter_src):
+                    for fname in files:
+                        local_path = os.path.join(root, fname)
+                        rel = os.path.relpath(local_path, adapter_src)
+                        bucket.blob(f"adapters/policy/{rel}").upload_from_filename(local_path)
+                        print(f"[firebase] uploaded policy adapter: {rel}")
+                print("[firebase] Policy adapter fully saved to Firebase Storage")
+            except Exception as e:
+                print(f"[firebase] Upload failed (adapter safe in volume): {e}")
+
+
 # ── Evaluation ──────────────────────────────────────────────────────────────
 @app.function(
     gpu="A100-40GB",
