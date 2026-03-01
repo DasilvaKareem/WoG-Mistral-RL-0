@@ -18,7 +18,8 @@ import json
 import os
 from datetime import datetime
 
-MEMORY_FILE = os.path.join(os.path.dirname(__file__), ".memory.json")
+_agent_id = os.environ.get("AGENT_ID", "0")
+MEMORY_FILE = os.path.join(os.path.dirname(__file__), f".memory_{_agent_id}.json")
 MAX_JOURNAL = 30
 MAX_FACTS = 20
 MAX_STRATEGIES = 15

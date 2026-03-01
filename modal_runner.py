@@ -1,26 +1,28 @@
 """
 Modal runner for WoG Agent experiments on H100 / A100.
 
-Three functions:
-  run_agent     — 24/7 game loop, collects trajectories (H100)
+Functions:
+  run_agent     — 24/7 game loop for one agent instance (H100)
   run_training  — LoRA fine-tuning on collected data (H100)
   run_eval      — base vs fine-tuned evaluation (A100)
 
-Persistent volume keeps wallet + memory alive across runs.
+Spin up 4 parallel agents:
+  modal run modal_runner.py          (default: 4 agents)
+  modal run modal_runner.py::run_agent --agent-id 0
 
-Setup (one-time):
-  modal secret create wog-secrets \
-    WANDB_API_KEY=<your-key> \
-    HF_TOKEN=<optional, for pushing adapter>
-
-Deploy agent:
-  modal run modal_runner.py::run_agent
-
-Deploy training:
+Run training:
   modal run modal_runner.py::run_training
 
-Deploy eval:
+Run eval:
   modal run modal_runner.py::run_eval
+
+Setup (one-time):
+  modal secret create wandb-secret WANDB_API_KEY=<your-key>
+
+Persistent volume keeps per-agent wallet + memory alive across runs.
+  /data/agent_0/.wallet_key_0   /data/agent_0/.memory_0.json
+  /data/agent_1/.wallet_key_1   /data/agent_1/.memory_1.json
+  ...
 """
 
 import os
@@ -51,41 +53,46 @@ image = (
     )
 )
 
-
 app = modal.App("wog-agent", image=image)
 
-# Persistent volume: wallet key, memory, trajectory data, adapters
+# Persistent volume: per-agent wallet, memory, trajectories, adapters
 volume = modal.Volume.from_name("wog-agent-data", create_if_missing=True)
 
-# Files to persist between runs
-PERSIST = [".wallet_key", ".memory.json"]
+NUM_AGENTS = 4
 
 
-def _restore(src_dir: str = "/data", dst_dir: str = "/app") -> None:
-    """Copy persisted files from volume into the working dir."""
-    for f in PERSIST:
-        src = os.path.join(src_dir, f)
+def _agent_persist_files(agent_id: int) -> list[str]:
+    return [f".wallet_key_{agent_id}", f".memory_{agent_id}.json"]
+
+
+def _restore(agent_id: int, src_dir: str = "/data", dst_dir: str = "/app") -> None:
+    """Copy persisted files for this agent from volume into the working dir."""
+    agent_src = os.path.join(src_dir, f"agent_{agent_id}")
+    for f in _agent_persist_files(agent_id):
+        src = os.path.join(agent_src, f)
         dst = os.path.join(dst_dir, f)
         if os.path.exists(src):
             shutil.copy2(src, dst)
-            print(f"[volume] restored {f}")
+            print(f"[volume] agent-{agent_id} restored {f}")
 
 
-def _save(src_dir: str = "/app", dst_dir: str = "/data") -> None:
-    """Copy working files back to the volume."""
-    for f in PERSIST:
+def _save(agent_id: int, src_dir: str = "/app", dst_dir: str = "/data") -> None:
+    """Copy working files for this agent back to the volume."""
+    agent_dst = os.path.join(dst_dir, f"agent_{agent_id}")
+    os.makedirs(agent_dst, exist_ok=True)
+    for f in _agent_persist_files(agent_id):
         src = os.path.join(src_dir, f)
-        dst = os.path.join(dst_dir, f)
+        dst = os.path.join(agent_dst, f)
         if os.path.exists(src):
             shutil.copy2(src, dst)
-            print(f"[volume] saved {f}")
-    # Also sync trajectory data
+            print(f"[volume] agent-{agent_id} saved {f}")
+    # Sync trajectory data under agent-specific subdir
     traj_src = os.path.join(src_dir, "data", "raw")
-    traj_dst = os.path.join(dst_dir, "data", "raw")
+    traj_dst = os.path.join(agent_dst, "data", "raw")
     if os.path.exists(traj_src):
         os.makedirs(traj_dst, exist_ok=True)
         subprocess.run(["rsync", "-a", traj_src + "/", traj_dst + "/"], check=False)
-        print("[volume] synced trajectory data")
+        print(f"[volume] agent-{agent_id} synced trajectories")
     volume.commit()
 
 
@@ -96,31 +103,33 @@ def _save(src_dir: str = "/app", dst_dir: str = "/data") -> None:
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def run_agent():
-    """Run the WoG game agent on H100 — collects trajectories + W&B telemetry."""
+def run_agent(agent_id: int = 0):
+    """Run one WoG quest-chaining agent on H100."""
     import torch
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    print(f"[agent-{agent_id}] GPU: {torch.cuda.get_device_name(0)}")
+    print(f"[agent-{agent_id}] VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
     subprocess.run(["git", "clone",
         "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
-    _restore()
+    _restore(agent_id)
 
+    env = {**os.environ, "AGENT_ID": str(agent_id)}
     proc = subprocess.Popen(
         ["python", "app_nvidia.py"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         cwd="/app",
+        env=env,
     )
 
     try:
         for line in iter(proc.stdout.readline, ""):  # type: ignore[union-attr]
-            print(line, end="", flush=True)
+            print(f"[agent-{agent_id}] {line}", end="", flush=True)
     finally:
         proc.wait()
-        _save()
+        _save(agent_id)
 
 
 # ── LoRA training ───────────────────────────────────────────────────────────
@@ -131,7 +140,7 @@ def run_agent():
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
 def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
-    """Fine-tune with LoRA on collected trajectories."""
+    """Fine-tune with LoRA on collected trajectories from all agents."""
     import torch
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
@@ -139,13 +148,14 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
         "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
-    # Pull latest trajectory data from volume
-    traj_src = "/data/data/raw"
-    traj_dst = "/app/data/raw"
-    if os.path.exists(traj_src):
-        os.makedirs(traj_dst, exist_ok=True)
-        subprocess.run(["rsync", "-a", traj_src + "/", traj_dst + "/"], check=False)
-        print("[volume] restored trajectory data")
+    # Merge trajectory data from all agent subdirs
+    merged_dst = "/app/data/raw"
+    os.makedirs(merged_dst, exist_ok=True)
+    for i in range(NUM_AGENTS):
+        traj_src = f"/data/agent_{i}/data/raw"
+        if os.path.exists(traj_src):
+            subprocess.run(["rsync", "-a", traj_src + "/", merged_dst + "/"], check=False)
+            print(f"[volume] merged trajectories from agent-{i}")
 
     proc = subprocess.Popen(
         [
@@ -166,7 +176,6 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
             print(line, end="", flush=True)
     finally:
         proc.wait()
-        # Save trained adapter back to volume
         adapter_src = "/app/adapters"
         adapter_dst = "/data/adapters"
         if os.path.exists(adapter_src):
@@ -193,7 +202,6 @@ def run_eval(max_examples: int = 50):
         "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
-    # Restore adapter from volume
     adapter_src = "/data/adapters"
     adapter_dst = "/app/adapters"
     if os.path.exists(adapter_src):
@@ -224,5 +232,7 @@ def run_eval(max_examples: int = 50):
 # ── Local entrypoints ───────────────────────────────────────────────────────
 @app.local_entrypoint()
 def main():
-    """Default: run the game agent."""
-    run_agent.remote()
+    """Spin up 4 quest-chaining agents in parallel on H100s."""
+    print(f"Spawning {NUM_AGENTS} agents in parallel...")
+    # starmap dispatches all 4 to separate H100 containers simultaneously
+    list(run_agent.starmap([[i] for i in range(NUM_AGENTS)]))

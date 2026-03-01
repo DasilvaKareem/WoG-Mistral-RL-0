@@ -38,8 +38,11 @@ MODEL_ID = "NousResearch/Hermes-2-Pro-Mistral-7B"
 MCP_URL = "https://mcp.urbantech.dev/mcp"
 SHARD_URL = "https://wog.urbantech.dev"
 
+# Per-agent identity — set AGENT_ID env var to differentiate parallel runs
+AGENT_ID = os.environ.get("AGENT_ID", "0")
+
 # Persist wallet key across restarts
-WALLET_FILE = os.path.join(os.path.dirname(__file__), ".wallet_key")
+WALLET_FILE = os.path.join(os.path.dirname(__file__), f".wallet_key_{AGENT_ID}")
 
 # How often the agent acts (seconds) when running autonomously
 TICK_INTERVAL = 3
@@ -176,7 +179,7 @@ async def register_and_deploy(wallet: Account, token: str) -> dict:
                 try:
                     r = await client.post(f"{SHARD_URL}/character/create", json={
                         "walletAddress": wallet.address,
-                        "name": "HermesAgent",
+                        "name": f"HermesAgent{AGENT_ID}",
                         "race": "human",
                         "className": "warrior",
                     }, headers=headers)
