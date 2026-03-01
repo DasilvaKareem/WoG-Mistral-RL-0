@@ -657,6 +657,7 @@ async def main():
                     args.setdefault("sessionId", session_id)
                     args.setdefault("entityId", entity_id)
                     args.setdefault("zoneId", zone_id)
+                    args.setdefault("walletAddress", wallet.address)
 
                     # Execute MCP tool call
                     try:
