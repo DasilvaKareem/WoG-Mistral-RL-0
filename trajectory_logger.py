@@ -28,7 +28,7 @@ REWARD_WEIGHT_QUEST_GOLD = 3.0
 REWARD_WEIGHT_QUEST_XP = 0.1
 
 # Upload to Firebase every N records (not every single flush — batches are cheaper)
-FIREBASE_UPLOAD_INTERVAL = 50
+FIREBASE_UPLOAD_INTERVAL = 5
 
 
 def _init_firebase_bucket():
