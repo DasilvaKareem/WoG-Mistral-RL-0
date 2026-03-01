@@ -41,6 +41,19 @@ SHARD_URL = "https://wog.urbantech.dev"
 # Per-agent identity — set AGENT_ID env var to differentiate parallel runs
 AGENT_ID = os.environ.get("AGENT_ID", "0")
 
+# Each agent is assigned a home zone so all 8 spread across the world
+AGENT_ZONES = [
+    "village-square",    # 0
+    "wild-meadow",       # 1
+    "dark-forest",       # 2
+    "auroral-plains",    # 3
+    "emerald-woods",     # 4
+    "viridian-range",    # 5
+    "moondancer-glade",  # 6
+    "felsrock-citadel",  # 7
+]
+AGENT_HOME_ZONE = AGENT_ZONES[int(AGENT_ID) % len(AGENT_ZONES)]
+
 # Persist wallet key across restarts
 WALLET_FILE = os.path.join(os.path.dirname(__file__), f".wallet_key_{AGENT_ID}")
 
@@ -69,18 +82,24 @@ For each function call return a json object with function name and arguments wit
 {{"name": "function_name", "arguments": {{"key": "value"}}}}
 </tool_call>
 
+HOME ZONE: {home_zone}
+You are assigned to operate primarily in {home_zone}. Travel there immediately if you are not already there.
+Complete all available quests in your home zone before venturing to adjacent zones.
+Return to {home_zone} between quest chains to pick up new quests.
+
 Your SOLE focus is quests. Follow this loop every cycle:
 1. Call get_my_status to check HP, active quests, level, and equipped armor/weapons.
 2. If HP < 40%, heal or rest before anything else.
-3. If you have an active quest, work toward completing its objective (fight, gather, navigate, talk to NPC).
-4. If you have no active quest, call quests_get_catalog to find available quests, then quests_accept the highest-reward one.
-5. When a quest objective is done, call quests_complete immediately to collect rewards.
-6. After every 2-3 quest completions, do ALL of the following in order:
+3. If you are not in {home_zone} and have no active quest, call travel_to_zone to return home.
+4. If you have an active quest, work toward completing its objective (fight, gather, navigate, talk to NPC).
+5. If you have no active quest, call quests_get_catalog to find available quests, then quests_accept the highest-reward one.
+6. When a quest objective is done, call quests_complete immediately to collect rewards.
+7. After every 2-3 quest completions, do ALL of the following in order:
    a. Call technique_list_catalog and technique_learn every affordable skill you don't already have.
    b. Call equipment_get to check your current gear. If any armor slot (head, chest, legs, hands, feet) is empty, call shop_buy_item or craft_item to fill it immediately.
    c. Call shop_buy_item to upgrade any armor or weapon that is weaker than what is available.
    d. Call equipment_equip to equip everything you just bought or crafted.
-7. Use travel_to_zone or navigate_to_npc to reach quest NPCs and objectives — never stand idle.
+8. Use travel_to_zone or navigate_to_npc to reach quest NPCs and objectives — never stand idle.
 
 ARMOR RULE: Never fight with an empty armor slot. If you cannot afford to buy armor, call craft_item to craft it from materials. Equipped armor reduces deaths, which is critical.
 
@@ -185,7 +204,7 @@ async def register_and_deploy(wallet: Account, token: str) -> dict:
                 try:
                     r = await client.post(f"{SHARD_URL}/character/create", json={
                         "walletAddress": wallet.address,
-                        "name": f"HermesAgent{AGENT_ID}",
+                        "name": f"Hermes{AGENT_ID}",
                         "race": "human",
                         "className": "warrior",
                     }, headers=headers)
@@ -475,6 +494,7 @@ async def main():
                     tools=tools_text,
                     strategy=get_current_strategy(mem),
                     memory=memory_to_prompt(mem),
+                    home_zone=AGENT_HOME_ZONE,
                 )
 
             print(f"Loading {MODEL_ID} (NVIDIA/CUDA)...")

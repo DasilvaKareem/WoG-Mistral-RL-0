@@ -60,7 +60,7 @@ app = modal.App("wog-agent", image=image)
 # Persistent volume: per-agent wallet, memory, trajectories, adapters
 volume = modal.Volume.from_name("wog-agent-data", create_if_missing=True)
 
-NUM_AGENTS = 4
+NUM_AGENTS = 8
 
 
 def _agent_persist_files(agent_id: int) -> list[str]:
