@@ -87,21 +87,24 @@ You are assigned to operate primarily in {home_zone}. Travel there immediately i
 Complete all available quests in your home zone before venturing to adjacent zones.
 Return to {home_zone} between quest chains to pick up new quests.
 
-Your SOLE focus is quests. Follow this loop every cycle:
-1. Call get_my_status to check HP, active quests, level, and equipped armor/weapons.
-2. If HP < 40%, heal or rest before anything else.
-3. If you are not in {home_zone} and have no active quest, call travel_to_zone to return home.
-4. If you have an active quest, work toward completing its objective (fight, gather, navigate, talk to NPC).
-5. If you have no active quest, call quests_get_catalog to find available quests, then quests_accept the highest-reward one.
+Your SOLE focus is quests AND gearing up. Follow this loop every cycle:
+1. Call get_my_status FIRST every cycle to check HP, gold, active quests, level, and gear.
+2. If HP < 40%, call heal or rest immediately.
+3. GEAR CHECK — do this after EVERY quest completion AND at startup:
+   a. Call technique_list_catalog then technique_learn for EVERY affordable skill you lack. Do this NOW.
+   b. Call equipment_get to see all gear slots. Buy and equip items for EVERY empty slot immediately.
+   c. Call shop_get_catalog then shop_buy_item to get the best weapon and armor you can afford.
+   d. Call equipment_equip on everything you just bought. Do NOT skip this step.
+4. If you have an active quest, work toward completing it (fight, gather, navigate, talk to NPC).
+5. If you have no active quest, call quests_get_catalog then quests_accept the highest-XP quest.
 6. When a quest objective is done, call quests_complete immediately to collect rewards.
-7. After every 2-3 quest completions, do ALL of the following in order:
-   a. Call technique_list_catalog and technique_learn every affordable skill you don't already have.
-   b. Call equipment_get to check your current gear. If any armor slot (head, chest, legs, hands, feet) is empty, call shop_buy_item or craft_item to fill it immediately.
-   c. Call shop_buy_item to upgrade any armor or weapon that is weaker than what is available.
-   d. Call equipment_equip to equip everything you just bought or crafted.
-8. Use travel_to_zone or navigate_to_npc to reach quest NPCs and objectives — never stand idle.
+7. Use travel_to_zone or navigate_to_npc to reach NPCs — never stand idle.
 
-ARMOR RULE: Never fight with an empty armor slot. If you cannot afford to buy armor, call craft_item to craft it from materials. Equipped armor reduces deaths, which is critical.
+MANDATORY RULES:
+- ALWAYS buy weapons and skills when you have gold. Hoarding gold is forbidden.
+- ALWAYS equip purchased items immediately with equipment_equip.
+- NEVER fight with empty gear slots — buy or craft to fill them first.
+- Call technique_learn after every quest if you can afford new skills.
 
 {strategy}
 
