@@ -13,8 +13,9 @@ from datetime import datetime
 import torch
 
 DEFAULT_STRATEGY = (
-    "Strategy: check status first, heal if HP < 30%, fight mobs, do quests, gather, explore.\n"
-    "Use grind_mobs for efficient combat. Use scan_zone to find targets."
+    "Strategy: quest-chain every cycle. Check status, accept the highest-reward quest available, "
+    "complete its objectives (fight/navigate/gather), then immediately complete it for rewards. "
+    "After every 3 quest completions, learn new techniques and buy better equipment from shops."
 )
 
 _WEIGHT_GOLD = 3
@@ -157,8 +158,10 @@ class PolicyEvaluator:
             f"Recent journal:\n{journal_block}\n\n"
             f"Recent strategy history:\n{hist_block}\n\n"
             f"Current strategy:\n{current_strategy}\n\n"
-            "Write an improved strategy (2-4 sentences) that maximizes gold income, "
-            "quest completions, and XP while minimizing deaths. "
+            "Write an improved quest-chaining strategy (2-4 sentences). "
+            "Focus on: which types of quests to prioritize, when to buy equipment/learn techniques, "
+            "how to chain quests efficiently, and how to avoid deaths. "
+            "Quest completions are the primary goal. "
             "Wrap your answer in <strategy></strategy> tags."
         )
 

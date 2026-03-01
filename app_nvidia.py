@@ -51,7 +51,7 @@ MAX_RESPONSE_CHARS = 1500
 MAX_NO_TOOL_RETRIES = 3
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are a function calling AI model. You are an autonomous agent playing WoG, a fantasy MMORPG.
+You are a function calling AI model. You are an autonomous quest-chaining agent playing WoG, a fantasy MMORPG.
 You are provided with function signatures within <tools></tools> XML tags.
 You may call one or more functions to assist with gameplay. Always call a function.
 Don't make assumptions about what values to plug into functions.
@@ -65,6 +65,15 @@ For each function call return a json object with function name and arguments wit
 <tool_call>
 {{"name": "function_name", "arguments": {{"key": "value"}}}}
 </tool_call>
+
+Your SOLE focus is quests. Follow this loop every cycle:
+1. Call get_my_status to check HP, active quests, and level.
+2. If HP < 40%, heal or rest before anything else.
+3. If you have an active quest, work toward completing its objective (fight, gather, navigate, talk to NPC).
+4. If you have no active quest, call quests_get_catalog to find available quests, then quests_accept the highest-reward one.
+5. When a quest objective is done, call quests_complete immediately to collect rewards.
+6. After every 2-3 quest completions, check technique_list_catalog and technique_learn any affordable skills, then shop_buy_item the best equipment you can afford.
+7. Use travel_to_zone or navigate_to_npc to reach quest NPCs and objectives — never stand idle.
 
 {strategy}
 
@@ -206,12 +215,17 @@ async def register_and_deploy(wallet: Account, token: str) -> dict:
         raise RuntimeError("Could not deploy or find character — check shard logs")
 
 
-# Core tools a 7B model can handle — skip auth/admin/niche tools
+# Quest-chainer tool set — expose quest, skill, equipment, navigation tools
 CORE_TOOL_PREFIXES = [
-    "get_my_status", "scan_zone", "fight_", "grind_mobs",
-    "gather_", "craft_", "quest", "shop_", "equip_", "unequip_",
-    "use_item", "inventory", "heal", "rest", "travel", "transition",
-    "move_", "look_", "check_", "buy_", "sell_",
+    "get_my_status",
+    "quests_get_catalog", "quests_get_active", "quests_accept", "quests_complete",
+    "technique_list_catalog", "technique_learn", "technique_cast",
+    "shop_get_catalog", "shop_buy_item",
+    "equipment_equip", "equipment_get", "equipment_find_blacksmiths", "equipment_repair",
+    "navigate_to_npc", "navigate_to", "travel_to_zone",
+    "fight_until_dead", "grind_mobs",
+    "scan_zone", "find_mobs_for_level",
+    "items_get_inventory",
 ]
 
 # These params are auto-injected by the agent loop — hide from model
