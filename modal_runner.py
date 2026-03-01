@@ -105,7 +105,7 @@ def _save(agent_id: int, src_dir: str = "/app", dst_dir: str = "/data") -> None:
     volumes={"/data": volume},
     secrets=[
         modal.Secret.from_name("wandb-secret"),
-        modal.Secret.from_name("firebase-admin"),
+        modal.Secret.from_name("wog-firebase"),
     ],
 )
 def run_agent(agent_id: int = 0):
