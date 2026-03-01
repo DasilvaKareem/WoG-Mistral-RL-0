@@ -161,14 +161,14 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
         "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
-    # Merge trajectory data from all agent subdirs
-    merged_dst = "/app/data/raw"
-    os.makedirs(merged_dst, exist_ok=True)
-    for i in range(NUM_AGENTS):
-        traj_src = f"/data/agent_{i}/data/raw"
-        if os.path.exists(traj_src):
-            subprocess.run(["rsync", "-a", traj_src + "/", merged_dst + "/"], check=False)
-            print(f"[volume] merged trajectories from agent-{i}")
+    # Copy pre-merged train/valid data from volume root
+    os.makedirs("/app/data", exist_ok=True)
+    for fname in ["train.jsonl", "valid.jsonl"]:
+        src = f"/data/{fname}"
+        dst = f"/app/data/{fname}"
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+            print(f"[volume] copied {fname} ({os.path.getsize(dst)} bytes)")
 
     proc = subprocess.Popen(
         [
