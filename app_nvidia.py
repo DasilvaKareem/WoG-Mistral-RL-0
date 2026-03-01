@@ -35,7 +35,7 @@ from policy_nvidia import PolicyEvaluator, get_current_strategy
 from trajectory_logger import TrajectoryLogger
 
 MODEL_ID = "NousResearch/Hermes-2-Pro-Mistral-7B"
-MCP_URL = "https://wog.urbantech.dev/mcp"
+MCP_URL = "https://mcp.urbantech.dev/mcp"
 SHARD_URL = "https://wog.urbantech.dev"
 
 # Persist wallet key across restarts
