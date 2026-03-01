@@ -308,14 +308,14 @@ def run_policy(epochs: int = 3, lr: float = 5e-6, lora_rank: int = 16):
 
 # ── Live model comparison ───────────────────────────────────────────────────
 @app.function(
-    gpu="H100",
+    gpu="A10G",
     timeout=14400,          # 4 hours
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
 )
 def run_one_comparison_agent(variant: str, agent_id: int, cycles: int = 100, starting_gold: int = 500):
     """Run one comparison agent (base / sft / policy). Launched in parallel by run_comparison."""
-    import torch, json as _json, firebase_admin
+    import torch, json as _json, firebase_admin  # noqa
     from firebase_admin import credentials, storage as fb_storage
     print(f"[{variant}] GPU: {torch.cuda.get_device_name(0)}")
 
