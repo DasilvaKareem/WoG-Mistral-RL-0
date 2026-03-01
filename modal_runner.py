@@ -49,10 +49,8 @@ image = (
         "huggingface_hub",
         "trl",
     )
-    .run_commands(
-        "git clone https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git /app"
-    )
 )
+
 
 app = modal.App("wog-agent", image=image)
 
@@ -104,6 +102,8 @@ def run_agent():
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
+    subprocess.run(["git", "clone",
+        "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
     _restore()
 
@@ -135,6 +135,8 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
     import torch
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
+    subprocess.run(["git", "clone",
+        "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
     # Pull latest trajectory data from volume
@@ -187,6 +189,8 @@ def run_eval(max_examples: int = 50):
     import torch
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
+    subprocess.run(["git", "clone",
+        "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
     # Restore adapter from volume
