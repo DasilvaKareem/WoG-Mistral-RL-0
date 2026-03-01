@@ -150,7 +150,7 @@ def run_agent(agent_id: int = 0):
     gpu="H100",
     timeout=43200,          # 12 hours
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("wandb-secret")],
+    secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
 )
 def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
     """Fine-tune with LoRA on collected trajectories from all agents."""
@@ -197,6 +197,29 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
             )
             volume.commit()
             print("[volume] saved adapter")
+
+            # Upload adapter files to Firebase Storage
+            try:
+                import json as _json
+                import firebase_admin
+                from firebase_admin import credentials, storage as fb_storage
+                sa = _json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"])
+                if not firebase_admin._apps:
+                    firebase_admin.initialize_app(
+                        credentials.Certificate(sa),
+                        {"storageBucket": os.environ["FIREBASE_STORAGE_BUCKET"]},
+                    )
+                bucket = fb_storage.bucket()
+                for root, _, files in os.walk(adapter_src):
+                    for fname in files:
+                        local_path = os.path.join(root, fname)
+                        rel = os.path.relpath(local_path, adapter_src)
+                        blob_path = f"adapters/{rel}"
+                        bucket.blob(blob_path).upload_from_filename(local_path)
+                        print(f"[firebase] uploaded adapters/{rel}")
+                print("[firebase] Adapter fully saved to Firebase Storage")
+            except Exception as e:
+                print(f"[firebase] Upload failed (adapter safe in volume): {e}")
 
 
 # ── Evaluation ──────────────────────────────────────────────────────────────
