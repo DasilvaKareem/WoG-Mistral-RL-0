@@ -624,6 +624,13 @@ async def main():
                         "list_shop": "shop_get_catalog",
                         "move_to": "navigate_to",
                         "go_to_zone": "travel_to_zone",
+                        "fight_mobs": "grind_mobs",
+                        "attack_mobs": "grind_mobs",
+                        "fight_mob": "fight_until_dead",
+                        "attack": "fight_until_dead",
+                        "kill_mobs": "grind_mobs",
+                        "engage_mobs": "grind_mobs",
+                        "combat": "fight_until_dead",
                     }
                     if name in TOOL_ALIASES:
                         corrected = TOOL_ALIASES[name]
@@ -659,7 +666,14 @@ async def main():
                         )
                         consecutive_errors = 0
                     except Exception as e:
-                        result_text = f"Error: {e}"
+                        err_str = str(e)
+                        # 400 Bad Request = MCP server rejected the call (bad tool name/args)
+                        # Treat as a soft error rather than crashing the session
+                        if "400" in err_str or "Bad Request" in err_str:
+                            result_text = f"Tool call rejected (400): {name} is not a valid tool. Use get_my_status instead."
+                            print(f"  [cycle {cycle}] 400 on {name} — treating as soft error")
+                        else:
+                            result_text = f"Error: {e}"
                         consecutive_errors += 1
 
                     preview = result_text[:300].replace("\n", " ")
