@@ -161,14 +161,23 @@ def run_training(epochs: int = 3, lr: float = 1e-5, lora_rank: int = 8):
         "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
     os.chdir("/app")
 
-    # Copy pre-merged train/valid data from volume root
+    # Download train/valid data from Firebase Storage
+    import json as _json
+    import firebase_admin
+    from firebase_admin import credentials, storage as fb_storage
+    sa = _json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"])
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(
+            credentials.Certificate(sa),
+            {"storageBucket": os.environ["FIREBASE_STORAGE_BUCKET"]},
+        )
+    bucket = fb_storage.bucket()
     os.makedirs("/app/data", exist_ok=True)
     for fname in ["train.jsonl", "valid.jsonl"]:
-        src = f"/data/{fname}"
         dst = f"/app/data/{fname}"
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-            print(f"[volume] copied {fname} ({os.path.getsize(dst)} bytes)")
+        bucket.blob(fname).download_to_filename(dst)
+        lines = sum(1 for _ in open(dst))
+        print(f"[firebase] downloaded {fname} — {lines} records")
 
     proc = subprocess.Popen(
         [
