@@ -54,6 +54,10 @@ AGENT_ZONES = [
 ]
 AGENT_HOME_ZONE = AGENT_ZONES[int(AGENT_ID) % len(AGENT_ZONES)]
 
+# For comparison runs: optionally load a LoRA adapter
+ADAPTER_PATH = os.environ.get("ADAPTER_PATH", None)  # e.g. "adapters/sft"
+VARIANT      = os.environ.get("VARIANT", None)        # e.g. "base", "sft", "policy"
+
 # Persist wallet key across restarts
 WALLET_FILE = os.path.join(os.path.dirname(__file__), f".wallet_key_{AGENT_ID}")
 
@@ -500,8 +504,8 @@ async def main():
                     home_zone=AGENT_HOME_ZONE,
                 )
 
-            print(f"Loading {MODEL_ID} (NVIDIA/CUDA)...")
-            model, tokenizer = load_model(MODEL_ID)
+            print(f"Loading {MODEL_ID} (NVIDIA/CUDA) variant={VARIANT or 'base'} adapter={ADAPTER_PATH or 'none'}...")
+            model, tokenizer = load_model(MODEL_ID, ADAPTER_PATH)
             print(f"Model loaded on {model.device}.\n")
 
             wandb_logger.init_run({

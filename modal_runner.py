@@ -361,16 +361,11 @@ def run_one_comparison_agent(variant: str, agent_id: int, cycles: int = 100, sta
     env = {
         **os.environ,
         "AGENT_ID": str(agent_id),
+        "VARIANT": variant,
+        "ADAPTER_PATH": adapter_path or "",
         "WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
     }
-    cmd = [
-        "python", "evaluate_comparison.py",
-        "--variant", variant,
-        "--cycles", str(cycles),
-        "--starting-gold", str(starting_gold),
-    ]
-    if adapter_path:
-        cmd += ["--adapter-path", adapter_path]
+    cmd = ["python", "app_nvidia.py"]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, cwd="/app", env=env)
