@@ -83,7 +83,7 @@ def log_cycle(
         "gameplay/quest_gold": stats.get("total_quests_gold", 0),
         # Quest timing
         "quests/avg_completion_time_s": _avg(stats.get("quest_completion_times", [])),
-        "quests/fastest_completion_s": min(stats.get("quest_completion_times", [0])) or 0,
+        "quests/fastest_completion_s": min(stats.get("quest_completion_times") or [0]) or 0,
         "quests/total_timed_completions": len(stats.get("quest_completion_times", [])),
         # Movement
         "movement/current_zone": current_zone,

@@ -35,7 +35,7 @@ import modal
 # ── Image ──────────────────────────────────────────────────────────────────
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
+    .apt_install("git", "rsync")
     .pip_install(
         "torch",
         "transformers",
