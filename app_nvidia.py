@@ -114,7 +114,8 @@ async def authenticate(wallet: Account) -> str:
 
 async def register_and_deploy(wallet: Account, token: str) -> dict:
     """Register wallet, create character if needed, and deploy agent."""
-    async with httpx.AsyncClient(timeout=120) as client:
+    timeout = httpx.Timeout(connect=30, read=300, write=30, pool=30)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         headers = {"Authorization": f"Bearer {token}"}
 
         r = await client.post(f"{SHARD_URL}/wallet/register", json={
@@ -125,12 +126,21 @@ async def register_and_deploy(wallet: Account, token: str) -> dict:
         else:
             print(f"Wallet register: {r.status_code} — {r.text}")
 
-        r = await client.post(f"{SHARD_URL}/character/create", json={
-            "walletAddress": wallet.address,
-            "name": "HermesAgent",
-            "race": "human",
-            "className": "warrior",
-        }, headers=headers)
+        # Create character with retry on timeout
+        for attempt in range(3):
+            try:
+                r = await client.post(f"{SHARD_URL}/character/create", json={
+                    "walletAddress": wallet.address,
+                    "name": "HermesAgent",
+                    "race": "human",
+                    "className": "warrior",
+                }, headers=headers)
+                break
+            except httpx.ReadTimeout:
+                if attempt == 2:
+                    raise
+                print(f"character/create timed out, retrying ({attempt + 1}/3)...")
+                await asyncio.sleep(5)
         if r.status_code == 200:
             char = r.json()
             print(f"Character created: {char.get('character', {}).get('name', '?')}")
