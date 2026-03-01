@@ -5,7 +5,12 @@ Captures every game loop cycle as a training example:
   - Input: full ChatML prompt (system + history)
   - Output: model response, parsed tool call, MCP result
   - Reward signals: all stat deltas + composite reward score
-  - Writes JSONL to data/raw/traj_<timestamp>.jsonl
+  - Writes JSONL locally AND uploads to Firebase Storage on every flush
+    so data survives container crashes.
+
+Firebase env vars (from Modal 'firebase-admin' secret):
+  FIREBASE_SERVICE_ACCOUNT_JSON  — service account JSON as string
+  FIREBASE_STORAGE_BUCKET        — e.g. my-project.appspot.com
 """
 
 import json
@@ -21,6 +26,39 @@ REWARD_WEIGHT_DEATHS = -10.0
 REWARD_WEIGHT_EXPLORATION = 5.0
 REWARD_WEIGHT_QUEST_GOLD = 3.0
 REWARD_WEIGHT_QUEST_XP = 0.1
+
+# Upload to Firebase every N records (not every single flush — batches are cheaper)
+FIREBASE_UPLOAD_INTERVAL = 50
+
+
+def _init_firebase_bucket():
+    """Try to initialize Firebase Storage bucket. Returns bucket or None."""
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, storage
+
+        sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+        bucket_name = os.environ.get("FIREBASE_STORAGE_BUCKET")
+        if not sa_json or not bucket_name:
+            print("[trajectory] Firebase env vars missing — local-only logging")
+            return None
+
+        import base64
+        try:
+            sa_dict = json.loads(sa_json)
+        except json.JSONDecodeError:
+            sa_dict = json.loads(base64.b64decode(sa_json).decode("utf-8"))
+
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(sa_dict)
+            firebase_admin.initialize_app(cred, {"storageBucket": bucket_name})
+
+        bucket = storage.bucket()
+        print(f"[trajectory] Firebase Storage ready: gs://{bucket_name}")
+        return bucket
+    except Exception as e:
+        print(f"[trajectory] Firebase init failed, local-only: {e}")
+        return None
 
 
 def compute_reward(signals: dict) -> float:
@@ -40,15 +78,20 @@ def compute_reward(signals: dict) -> float:
 class TrajectoryLogger:
     """Logs agent trajectories as JSONL for LoRA fine-tuning."""
 
-    def __init__(self, output_dir: str = "data/raw"):
+    def __init__(self, output_dir: str = "data/raw", agent_id: str = "0"):
         self.output_dir = output_dir
+        self.agent_id = agent_id
         os.makedirs(output_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.filepath = os.path.join(output_dir, f"traj_{timestamp}.jsonl")
+        self.filename = f"traj_agent{agent_id}_{timestamp}.jsonl"
+        self.filepath = os.path.join(output_dir, self.filename)
         self._file = open(self.filepath, "a")
         self._current: dict | None = None
         self._total_records = 0
+        self._last_upload_count = 0
+
+        self._bucket = _init_firebase_bucket()
         print(f"[trajectory] Logging to {self.filepath}")
 
     def begin_cycle(
@@ -99,34 +142,27 @@ class TrajectoryLogger:
         times_after = list(quest_completion_times or [])
         times_before = self._current["quest_completion_times_before"]
 
-        # If a quest was completed this cycle, capture its completion time
         new_times = times_after[len(times_before):]
         last_quest_time_s = new_times[-1] if new_times else None
 
-        # Full reward signals — every metric we track
         reward_signals = {
-            # Combat
             "gold_delta": stats_after.get("total_gold_earned", 0) - before.get("total_gold_earned", 0),
             "xp_delta": stats_after.get("total_xp", 0) - before.get("total_xp", 0),
             "kills_delta": stats_after.get("total_kills", 0) - before.get("total_kills", 0),
             "deaths_delta": stats_after.get("total_deaths", 0) - before.get("total_deaths", 0),
-            # Quests
             "quests_completed_delta": quests_completed - self._current["quests_completed_before"],
             "quest_gold_delta": stats_after.get("total_quests_gold", 0) - before.get("total_quests_gold", 0),
             "quest_xp_delta": stats_after.get("total_quests_xp", 0) - before.get("total_quests_xp", 0),
             "quest_completion_time_s": last_quest_time_s,
             "quest_difficulty": last_quest_difficulty,
-            # Exploration
             "zones_discovered_delta": zones_discovered - self._current["zones_discovered_before"],
             "zone_transitions_delta": (
                 stats_after.get("total_zone_transitions", 0) - before.get("total_zone_transitions", 0)
             ),
-            # Context
             "zone_before": self._current["zone_before"],
             "zone_after": zone,
         }
 
-        # Composite scalar reward
         reward = compute_reward(reward_signals)
 
         record = {
@@ -152,6 +188,24 @@ class TrajectoryLogger:
         self._total_records += 1
         self._current = None
 
+        # Upload to Firebase every FIREBASE_UPLOAD_INTERVAL records
+        if self._bucket and (self._total_records - self._last_upload_count) >= FIREBASE_UPLOAD_INTERVAL:
+            self._upload_to_firebase()
+
+    def _upload_to_firebase(self) -> None:
+        """Upload the current JSONL file to Firebase Storage."""
+        if not self._bucket:
+            return
+        try:
+            self._file.flush()
+            blob_path = f"trajectories/agent{self.agent_id}/{self.filename}"
+            blob = self._bucket.blob(blob_path)
+            blob.upload_from_filename(self.filepath)
+            self._last_upload_count = self._total_records
+            print(f"[trajectory] Uploaded {self._total_records} records to gs://{blob_path}")
+        except Exception as e:
+            print(f"[trajectory] Firebase upload failed (data safe locally): {e}")
+
     def get_stats(self) -> dict:
         """Return logging statistics."""
         return {
@@ -160,7 +214,9 @@ class TrajectoryLogger:
         }
 
     def close(self) -> None:
-        """Close the JSONL file."""
+        """Close the JSONL file and do a final upload."""
         if self._file and not self._file.closed:
             self._file.close()
             print(f"[trajectory] Saved {self._total_records} records to {self.filepath}")
+        if self._bucket and self._total_records > self._last_upload_count:
+            self._upload_to_firebase()

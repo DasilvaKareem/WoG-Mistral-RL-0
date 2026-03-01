@@ -51,6 +51,7 @@ image = (
         "wandb-workspaces",
         "huggingface_hub",
         "trl",
+        "firebase-admin",
     )
 )
 
@@ -102,7 +103,10 @@ def _save(agent_id: int, src_dir: str = "/app", dst_dir: str = "/data") -> None:
     gpu="H100",
     timeout=86400,          # 24 hours
     volumes={"/data": volume},
-    secrets=[modal.Secret.from_name("wandb-secret")],
+    secrets=[
+        modal.Secret.from_name("wandb-secret"),
+        modal.Secret.from_name("firebase-admin"),
+    ],
 )
 def run_agent(agent_id: int = 0):
     """Run one WoG quest-chaining agent on H100."""

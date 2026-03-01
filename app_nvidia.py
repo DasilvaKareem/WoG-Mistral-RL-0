@@ -484,7 +484,7 @@ async def main():
             })
 
             weave.init("wog-agent")
-            traj_logger = TrajectoryLogger()
+            traj_logger = TrajectoryLogger(agent_id=AGENT_ID)
 
             print("=" * 60)
             print("  WoG Agent is LIVE — NVIDIA/CUDA — running autonomously")
