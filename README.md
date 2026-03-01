@@ -248,7 +248,53 @@ Records upload to **Firebase Storage** every 5 records — no data lost on conta
 
 ## 📈 RL Performance
 
-*Base model vs fine-tuned checkpoint — measured across 1 000-cycle eval runs.*
+*Three-way comparison: Base → SFT → Policy RL — measured across live gameplay runs.*
+
+### 🏆 Full Comparison Dashboard
+
+<div align="center">
+<img src="docs/assets/wog_comparison_dashboard.png" alt="WoG Comparison Dashboard" width="90%"/>
+</div>
+
+<br/>
+
+### Combat & Progression
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center"><img src="docs/assets/kills_per_cycle.png" alt="Kills per Cycle"/><br/><sub><b>Kills per Cycle</b><br/>SFT: 3.7× more efficient than base</sub></td>
+<td align="center"><img src="docs/assets/xp_per_cycle.png" alt="XP per Cycle"/><br/><sub><b>XP Gained per Cycle</b><br/>SFT: 2.7× more XP than base</sub></td>
+</tr>
+</table>
+
+</div>
+
+> **Policy note:** The policy agent shows 0 kills/XP early on — this is **intended behaviour**. The policy model learned to spend opening cycles purchasing gear from the shop before engaging in combat, building a stronger loadout before fighting.
+
+### Tool Behaviour & Inference
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center"><img src="docs/assets/tool_behavior.png" alt="Tool Behavior"/><br/><sub><b>Tool Selection Distribution</b><br/>Policy shifts toward Economy/Shop tools</sub></td>
+<td align="center"><img src="docs/assets/inference_time.png" alt="Inference Time"/><br/><sub><b>Avg Inference Time per Cycle</b><br/>Policy adapter is largest and most specialised</sub></td>
+</tr>
+</table>
+
+</div>
+
+| Metric | Base | SFT | Policy |
+|---|---|---|---|
+| Kills / cycle | 0.09 | 0.33 | 0.00* |
+| XP / cycle | 1.8 | 4.8 | 0.0* |
+| Avg inference time | 18.8 s | 58.4 s | 124.7 s |
+
+*\*Policy agent intentionally front-loads gear purchasing before combat.*
+
+### Historical Cumulative Stats
 
 <div align="center">
 
