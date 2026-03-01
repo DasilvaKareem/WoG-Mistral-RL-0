@@ -70,13 +70,19 @@ For each function call return a json object with function name and arguments wit
 </tool_call>
 
 Your SOLE focus is quests. Follow this loop every cycle:
-1. Call get_my_status to check HP, active quests, and level.
+1. Call get_my_status to check HP, active quests, level, and equipped armor/weapons.
 2. If HP < 40%, heal or rest before anything else.
 3. If you have an active quest, work toward completing its objective (fight, gather, navigate, talk to NPC).
 4. If you have no active quest, call quests_get_catalog to find available quests, then quests_accept the highest-reward one.
 5. When a quest objective is done, call quests_complete immediately to collect rewards.
-6. After every 2-3 quest completions, check technique_list_catalog and technique_learn any affordable skills, then shop_buy_item the best equipment you can afford.
+6. After every 2-3 quest completions, do ALL of the following in order:
+   a. Call technique_list_catalog and technique_learn every affordable skill you don't already have.
+   b. Call equipment_get to check your current gear. If any armor slot (head, chest, legs, hands, feet) is empty, call shop_buy_item or craft_item to fill it immediately.
+   c. Call shop_buy_item to upgrade any armor or weapon that is weaker than what is available.
+   d. Call equipment_equip to equip everything you just bought or crafted.
 7. Use travel_to_zone or navigate_to_npc to reach quest NPCs and objectives — never stand idle.
+
+ARMOR RULE: Never fight with an empty armor slot. If you cannot afford to buy armor, call craft_item to craft it from materials. Equipped armor reduces deaths, which is critical.
 
 {strategy}
 
@@ -223,12 +229,14 @@ CORE_TOOL_PREFIXES = [
     "get_my_status",
     "quests_get_catalog", "quests_get_active", "quests_accept", "quests_complete",
     "technique_list_catalog", "technique_learn", "technique_cast",
-    "shop_get_catalog", "shop_buy_item",
-    "equipment_equip", "equipment_get", "equipment_find_blacksmiths", "equipment_repair",
+    "shop_get_catalog", "shop_buy_item", "shop_get_item",
+    "equipment_equip", "equipment_unequip", "equipment_get", "equipment_find_blacksmiths", "equipment_repair",
+    "craft_item", "craft_list_recipes", "craft_get_recipe",
     "navigate_to_npc", "navigate_to", "travel_to_zone",
     "fight_until_dead", "grind_mobs",
     "scan_zone", "find_mobs_for_level",
-    "items_get_inventory",
+    "items_get_inventory", "items_use",
+    "heal", "rest",
 ]
 
 # These params are auto-injected by the agent loop — hide from model
