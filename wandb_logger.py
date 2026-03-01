@@ -13,6 +13,13 @@ try:
 except ImportError:
     wandb = None
 
+try:
+    import torch as _torch
+    _torch_available = True
+except ImportError:
+    _torch = None  # type: ignore[assignment]
+    _torch_available = False
+
 _run = None
 _tool_counts: Counter = Counter()
 _zone_counts: Counter = Counter()
@@ -29,6 +36,7 @@ def init_run(config: dict) -> None:
             project="wog-agent",
             config=config,
             reinit=True,
+            settings=wandb.Settings(x_stats_sampling_interval=10),
         )
         print(f"[wandb] Run started: {_run.url}")
     except Exception as e:
@@ -244,6 +252,26 @@ def log_policy_update(
             action,
         )
         _run.log({"policy/history": table}, step=cycle)
+    except Exception:
+        pass
+
+
+def log_gpu_stats(cycle: int) -> None:
+    """Log CUDA GPU memory stats if available."""
+    if _run is None or not _torch_available or _torch is None:
+        return
+    try:
+        if not _torch.cuda.is_available():
+            return
+        metrics = {}
+        for i in range(_torch.cuda.device_count()):
+            alloc = _torch.cuda.memory_allocated(i) / 1024 ** 3
+            reserved = _torch.cuda.memory_reserved(i) / 1024 ** 3
+            total = _torch.cuda.get_device_properties(i).total_memory / 1024 ** 3
+            metrics[f"gpu/{i}/memory_allocated_gb"] = alloc
+            metrics[f"gpu/{i}/memory_reserved_gb"] = reserved
+            metrics[f"gpu/{i}/memory_utilization_pct"] = (alloc / total * 100) if total else 0
+        _run.log(metrics, step=cycle)
     except Exception:
         pass
 

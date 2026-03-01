@@ -33,8 +33,8 @@ from policy import PolicyEvaluator, get_current_strategy
 from trajectory_logger import TrajectoryLogger
 
 MODEL_ID = "mlx-community/Hermes-2-Pro-Mistral-7B-8bit"
-MCP_URL = "https://ips-latter-step-socket.trycloudflare.com/mcp"
-SHARD_URL = "https://private-accessible-asia-qualified.trycloudflare.com"
+MCP_URL = "https://wog.urbantech.dev/mcp"
+SHARD_URL = "https://wog.urbantech.dev"
 
 # Persist wallet key across restarts
 WALLET_FILE = os.path.join(os.path.dirname(__file__), ".wallet_key")

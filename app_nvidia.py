@@ -35,8 +35,8 @@ from policy_nvidia import PolicyEvaluator, get_current_strategy
 from trajectory_logger import TrajectoryLogger
 
 MODEL_ID = "NousResearch/Hermes-2-Pro-Mistral-7B"
-MCP_URL = "https://ips-latter-step-socket.trycloudflare.com/mcp"
-SHARD_URL = "https://private-accessible-asia-qualified.trycloudflare.com"
+MCP_URL = "https://wog.urbantech.dev/mcp"
+SHARD_URL = "https://wog.urbantech.dev"
 
 # Persist wallet key across restarts
 WALLET_FILE = os.path.join(os.path.dirname(__file__), ".wallet_key")
@@ -466,11 +466,20 @@ async def main():
                 try:
                     prompt = build_prompt(messages)
                     stats_before = dict(mem.get("stats", {}))
-                    traj_logger.begin_cycle(cycle, messages, prompt, stats_before)
+                    traj_logger.begin_cycle(
+                        cycle, messages, prompt, stats_before,
+                        quests_completed=len(mem.get("quests", {}).get("completed", [])),
+                        zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
+                        zone=mem.get("facts", {}).get("zone"),
+                        quest_completion_times=mem.get("stats", {}).get("quest_completion_times", []),
+                    )
 
                     t0 = time.time()
                     response = run_inference(model, tokenizer, prompt)
                     inference_time = time.time() - t0
+
+                    # Log GPU memory stats if CUDA is available
+                    wandb_logger.log_gpu_stats(cycle)
 
                     tool_call = parse_tool_call(response)
 
@@ -543,6 +552,9 @@ async def main():
                     process_tool_result(mem, name, result_text)
 
                     # Log trajectory for fine-tuning
+                    _comp_times = mem.get("quests", {}).get("completion_times", [])
+                    _last_diff = _comp_times[-1].get("difficulty") if _comp_times else None
+
                     traj_logger.end_cycle(
                         response=response,
                         tool_call=tool_call,
@@ -552,6 +564,11 @@ async def main():
                         tool_success=consecutive_errors == 0,
                         stats_after=dict(mem.get("stats", {})),
                         inference_time=inference_time,
+                        quests_completed=len(mem.get("quests", {}).get("completed", [])),
+                        zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
+                        zone=mem.get("facts", {}).get("zone"),
+                        quest_completion_times=mem.get("stats", {}).get("quest_completion_times", []),
+                        last_quest_difficulty=_last_diff,
                     )
 
                     # Sync zone_id

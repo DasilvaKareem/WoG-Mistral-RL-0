@@ -63,8 +63,8 @@ def main():
             panels=[
                 wr.LinePlot(x="Step", y=["gameplay/total_xp"], title="Total XP (cumulative)"),
                 wr.BarPlot(
-                    metrics=[wr.metrics.summary("gameplay/total_xp")],
-                    group_by="config.model",
+                    metrics=[wr.metrics.SummaryMetric("gameplay/total_xp")],
+                    groupby=wr.metrics.Config("model"),
                     title="Total XP by Model",
                 ),
             ],
@@ -82,8 +82,8 @@ def main():
             panels=[
                 wr.LinePlot(x="Step", y=["gameplay/total_kills"], title="Total Kills (cumulative)"),
                 wr.BarPlot(
-                    metrics=[wr.metrics.summary("gameplay/total_kills")],
-                    group_by="config.model",
+                    metrics=[wr.metrics.SummaryMetric("gameplay/total_kills")],
+                    groupby=wr.metrics.Config("model"),
                     title="Total Kills by Model",
                 ),
             ],
@@ -102,8 +102,8 @@ def main():
             panels=[
                 wr.LinePlot(x="Step", y=["gameplay/quests_completed"], title="Quests Completed (cumulative)"),
                 wr.BarPlot(
-                    metrics=[wr.metrics.summary("gameplay/quests_completed")],
-                    group_by="config.model",
+                    metrics=[wr.metrics.SummaryMetric("gameplay/quests_completed")],
+                    groupby=wr.metrics.Config("model"),
                     title="Quests Completed by Model",
                 ),
             ],
@@ -156,6 +156,42 @@ def main():
             ],
             runsets=[
                 wr.Runset(project=args.project, entity=entity),
+            ],
+        ),
+
+        # ── GPU Metrics (NVIDIA runs only) ──
+        wr.H1("GPU Memory (NVIDIA)"),
+        wr.MarkdownBlock(
+            "CUDA GPU memory usage during the production run. Sampled every 10 seconds by W&B.\n\n"
+            "- **Allocated**: memory actively used by tensors\n"
+            "- **Reserved**: memory held by PyTorch allocator (includes cached blocks)\n"
+            "- **Utilization %**: allocated / total device memory\n\n"
+            "Filtered to runs with `config.backend = 'nvidia'`."
+        ),
+        wr.PanelGrid(
+            panels=[
+                wr.LinePlot(
+                    x="Step",
+                    y=["gpu/0/memory_allocated_gb"],
+                    title="GPU 0 — Allocated Memory (GB)",
+                ),
+                wr.LinePlot(
+                    x="Step",
+                    y=["gpu/0/memory_reserved_gb"],
+                    title="GPU 0 — Reserved Memory (GB)",
+                ),
+                wr.LinePlot(
+                    x="Step",
+                    y=["gpu/0/memory_utilization_pct"],
+                    title="GPU 0 — Memory Utilization (%)",
+                ),
+            ],
+            runsets=[
+                wr.Runset(
+                    project=args.project,
+                    entity=entity,
+                    filters="config.backend = 'nvidia'",
+                ),
             ],
         ),
 
