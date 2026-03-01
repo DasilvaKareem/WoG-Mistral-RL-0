@@ -1,201 +1,370 @@
+<div align="center">
+
+<img src="docs/assets/banner.png" alt="World of Geneva Banner" width="100%"/>
+
+<br/>
+
+<img src="docs/assets/app-icon.png" alt="WoG Agent Icon" width="120"/>
+
 # WoG-Mistral-RL-0
 
-**Autonomous MMORPG agent powered by Hermes-2-Pro-Mistral-7B running locally on Apple Silicon, with MCP tool calling and a self-improving RL policy loop.**
+**Autonomous MMORPG agent powered by Hermes-2-Pro-Mistral-7B**
+*Native macOS client · NVIDIA cloud RL pipeline · Self-improving policy loop*
 
-![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
-![License MIT](https://img.shields.io/badge/license-MIT-green)
-![W&B](https://img.shields.io/badge/logging-Weights%20%26%20Biases-orange)
+![Swift](https://img.shields.io/badge/Swift-5.10-orange?logo=swift)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python)
+![MLX](https://img.shields.io/badge/MLX-Apple%20Silicon-black?logo=apple)
+![Modal](https://img.shields.io/badge/Compute-Modal%20H100-purple)
+![W&B](https://img.shields.io/badge/Logging-W%26B-orange?logo=weightsandbiases)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+<img src="docs/assets/heart.png" height="36"/>
+<img src="docs/assets/gold.png" height="36"/>
+<img src="docs/assets/sword.png" height="36"/>
+<img src="docs/assets/quest.png" height="36"/>
+<img src="docs/assets/armor.png" height="36"/>
+<img src="docs/assets/level.png" height="36"/>
+
+</div>
 
 ---
 
-## Overview
+## What Is This?
 
-WoG-Mistral-RL-0 is a 24/7 autonomous agent that plays [World of Gatherum](https://wog.gg), a fantasy MMORPG, entirely on its own. It runs **Hermes-2-Pro-Mistral-7B** (8-bit quantized) locally via [MLX](https://github.com/ml-explore/mlx) on Apple Silicon, calls game actions through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), and continuously improves its gameplay strategy through a reinforcement-learning-style policy loop — all without any cloud LLM API calls.
+WoG-Mistral-RL-0 is a 24/7 autonomous agent that plays [**World of Geneva**](https://worldofgeneva.com) — a fantasy MMORPG — entirely on its own. No human input. No cloud LLM API. Just a 7B model running locally on your Mac (or on an H100 in the cloud) choosing actions, calling game tools through MCP, and continuously rewriting its own strategy based on measured performance.
 
-The agent fights mobs, completes quests, gathers resources, crafts items, manages inventory, explores zones, and rewrites its own strategy based on measured performance deltas.
+<div align="center">
+<img src="docs/assets/concept-art.png" alt="World of Geneva Concept Art" width="80%"/>
+</div>
+
+<br/>
+
+The agent fights mobs, completes quests, gathers resources, crafts items, manages inventory, travels between zones, and **rewrites its own strategy** using an RL policy loop — all without touching a cloud API.
+
+| Stack | Runtime | Hardware |
+|-------|---------|----------|
+| 🍎 **Native macOS Client** | Swift + SwiftUI + MLX | Apple Silicon (M1–M4) |
+| ⚡ **NVIDIA Cloud Stack** | Python + transformers + Modal | H100 / A100 |
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    WoG-Mistral-RL-0                     │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ Ethereum  │───>│ Shard Auth   │───>│ MCP Session  │  │
-│  │ Wallet    │    │ (JWT)        │    │ Auth         │  │
-│  └──────────┘    └──────────────┘    └──────┬───────┘  │
-│                                             │          │
-│  ┌──────────────────────────────────────────▼───────┐  │
-│  │              Autonomous Game Loop                 │  │
-│  │  ┌────────────┐  ┌───────────┐  ┌─────────────┐  │  │
-│  │  │ MLX Local  │─>│ Tool Call │─>│ MCP Server  │  │  │
-│  │  │ Inference  │  │ Parser    │  │ (Game API)  │  │  │
-│  │  │ (7B 8-bit) │  └───────────┘  └──────┬──────┘  │  │
-│  │  └────────────┘                        │         │  │
-│  │       ▲            ┌───────────────────▼──────┐  │  │
-│  │       │            │ Response Truncation +    │  │  │
-│  │       └────────────│ Memory Auto-Extraction   │  │  │
-│  │                    └──────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────┘  │
-│                                                         │
-│  ┌────────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │ Persistent     │  │ Policy      │  │ W&B         │  │
-│  │ Memory         │  │ Evaluator   │  │ Telemetry   │  │
-│  │ (.memory.json) │  │ (RL loop)   │  │ (metrics)   │  │
-│  └────────────────┘  └─────────────┘  └─────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│                         WoG-Mistral-RL-0                              │
+│                                                                       │
+│  ┌─────────────────────────────┐   ┌───────────────────────────────┐  │
+│  │   🍎 Native macOS Client    │   │   ⚡ NVIDIA Cloud Stack        │  │
+│  │   (Swift / Apple Silicon)   │   │   (Python / Modal H100)       │  │
+│  │                             │   │                               │  │
+│  │  SwiftUI Dashboard          │   │  8 Parallel Agents            │  │
+│  │  WKWebView Game Client      │   │  (one per world zone)         │  │
+│  │  MLX 7B local inference     │   │  HuggingFace 4-bit quant.     │  │
+│  └──────────────┬──────────────┘   └───────────────┬───────────────┘  │
+│                 │                                  │                  │
+│         ┌───────▼──────────────────────────────────▼──────┐           │
+│         │               Shared Game Loop                  │           │
+│         │  Ethereum Wallet → Shard JWT → MCP Session      │           │
+│         │  LLM Inference → Tool Call → MCP Execute        │           │
+│         │  Memory Auto-Extract → Policy RL → W&B Log      │           │
+│         └──────────────────────────────────────────────────┘           │
+│                                                                       │
+│         ┌────────────────────────────────────────────────────┐        │
+│         │  🧠 RL Fine-Tuning Pipeline (NVIDIA)               │        │
+│         │  trajectory_logger → Firebase → LoRA on H100       │        │
+│         │  base vs fine-tuned eval → W&B comparison          │        │
+│         └────────────────────────────────────────────────────┘        │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+---
 
-- **Local LLM inference** — Hermes-2-Pro-Mistral-7B (8-bit) via MLX, zero cloud API costs
-- **MCP tool calling** — Hermes-2-Pro function calling format with `<tool_call>` XML tags, auto-injected session params
-- **Ethereum wallet auth** — auto-generated, persisted to `.wallet_key`, signs shard challenges for JWT + MCP session auth
-- **Persistent memory** — structured JSON store with facts, quests, zones, strategies, inventory notes, and journal (survives restarts)
-- **Self-improving policy loop** — every 100 cycles, evaluates gold/XP/quest performance deltas and uses the LLM to rewrite its own strategy with EMA-smoothed scoring, epsilon-greedy exploration, and best-strategy rollback
-- **W&B telemetry** — real-time dashboards for gameplay metrics, tool call distribution, inference timing, error rates, and policy evolution
-- **Context management** — ChatML prompt format, history trimming (last 20 messages), JSON-aware response truncation (1500 chars)
-- **Auto-recovery** — stuck detection with context reset after 3 consecutive no-tool cycles, error cooldown after 5 consecutive failures, automatic re-auth on session expiry
+## 🍎 Native macOS Client
 
-## Project Structure
+<div align="center">
+<img src="docs/assets/castle-bg.png" alt="WoG Castle" width="75%"/>
+</div>
+
+<br/>
+
+A full native macOS app (`Frontend/Agent/`) built with SwiftUI + SpriteKit + WebKit. Runs the entire agent on-device — no server, no Python, no Docker.
+
+### Onboarding Flow
 
 ```
-mistral/
-├── app.py             # Main agent: wallet, auth, MCP connection, game loop
-├── memory.py          # Persistent memory system with auto-extraction from tool results
-├── policy.py          # Self-improving RL policy evaluator (EMA scoring, meta-prompting)
-├── wandb_logger.py    # W&B telemetry (gameplay, tools, policy, errors)
-├── requirements.txt   # Python dependencies
-├── .gitignore         # Ignores wallet key, memory file, wandb runs, pycache
-├── .wallet_key        # (generated) Ethereum private key — gitignored
-└── .memory.json       # (generated) Persistent agent memory — gitignored
+🌟 Splash  ──►  🔐 Wallet Setup  ──►  ⚔️ Character  ──►  ▶️ PLAY  ──►  🤖 Agent starts
 ```
 
-## Prerequisites
+<div align="center">
+<img src="docs/assets/tutorial.png" alt="WoG Tutorial" width="70%"/>
+</div>
 
-- **Apple Silicon Mac** (M1/M2/M3/M4) — required for MLX inference
-- **Python 3.11+**
-- **WoG shard access** — the MCP URL and Shard URL are configured in `app.py`
+1. **🔐 Forge Your Seal** — generates a secp256k1 keypair stored in macOS Keychain (never leaves device). Or import an existing 64-char hex private key.
+2. **⚔️ Choose Your Champion** — pick race (Human / Elf / Dwarf / Orc / Halfling) and class (Warrior / Mage / Rogue / Ranger / Cleric) from CoC-style cards.
+3. **▶️ PLAY** — loads the MLX model, authenticates with the shard, and the agent **auto-starts immediately**.
 
-## Quick Start
+### Project Structure
 
-```bash
-# Clone
-git clone https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git
-cd WoG-Mistral-RL-0
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the agent
-python app.py
+```
+Frontend/Agent/Agent/
+├── Services/
+│   ├── AgentRunner.swift      ← Core game loop actor (auth, deploy, MCP, inference)
+│   ├── AgentService.swift     ← @Observable UI bridge + JWT cache + auto-connect
+│   ├── MCPGameClient.swift    ← MCP StreamableHTTP actor (tool discovery + calls)
+│   ├── MLXService.swift       ← mlx-swift-lm model loader + ChatSession
+│   ├── MemoryManager.swift    ← Persistent JSON memory with auto-extraction
+│   └── EthSigner.swift        ← Native Ethereum signing via secp256k1 (Keychain)
+│
+├── Views/
+│   ├── MapSKView.swift        ← SpriteKit world map with live agent dot
+│   ├── WebGameView.swift      ← Authenticated WKWebView (injects wallet + JWT)
+│   ├── LiveLogView.swift      ← Real-time agent log stream
+│   ├── PerformanceView.swift  ← Lifetime stats dashboard
+│   ├── PolicyView.swift       ← Strategy history + RL score trace
+│   └── ...                    ← Onboarding, character setup, zones
 ```
 
-On first run the agent will:
-1. Generate an Ethereum wallet and save it to `.wallet_key`
-2. Authenticate with the WoG shard (JWT) and MCP server
-3. Create a character named "HermesAgent" (human warrior) if one doesn't exist
-4. Deploy into the game world and start playing autonomously
+### Authentication
 
-No `.env` file is needed — the MCP and Shard URLs are configured directly in `app.py`.
+Everything happens natively in Swift — no Python server, no external signing service:
 
-## How It Works
+```
+EthSigner (Keychain key)
+    ├──► GET  /auth/challenge?wallet=0x...  →  {message, timestamp}
+    │         personalSign(message)          →  secp256k1 signature
+    │    POST /auth/verify {wallet,sig,ts}   →  JWT (cached, auto-refreshed)
+    └──► MCPGameClient.connect()  (MCP-level auth via auth_get_challenge tool)
+```
 
-### Authentication Flow
-
-The agent uses a three-step auth process:
-
-1. **Wallet creation** — generates an Ethereum keypair on first run, persists the private key to `.wallet_key` (chmod 600)
-2. **Shard auth** — requests a challenge message from the shard, signs it with the wallet, and verifies the signature to receive a JWT
-3. **MCP session auth** — after establishing a Streamable HTTP MCP connection, performs a second challenge/verify handshake through MCP tools (`auth_get_challenge` / `auth_verify_signature`) to authenticate the MCP session
+JWT is decoded natively (Base64url, no library), cached with expiry, and refreshed every ~60 s. Passed to `AgentRunner.start(preAuthToken:)` so the agent skips re-auth on launch.
 
 ### Game Loop
 
-The core loop runs on a 3-second tick:
+```
+rebuildSession()  ←  flat tool list + strategy + memory snapshot
+      │
+ ChatSession.respond()    ←  MLX local inference (Mistral 7B 8-bit)
+      │
+ extractFirstJSONObject() ←  brace-counting parser (handles nested JSON)
+      │
+ MCPGameClient.callTool() ←  auto-injects sessionId / entityId / zoneId
+      │
+ MemoryManager.process()  ←  extracts facts, stats, quests, zone info
+      │
+ PolicyEvaluator.update() ←  every 100 cycles: score → EMA → strategy rewrite
+```
 
-1. **Build prompt** — assembles a ChatML prompt with the system message (tools + strategy + memory) and conversation history
-2. **LLM inference** — generates a response using MLX (`max_tokens=512`)
-3. **Parse tool call** — extracts `<tool_call>` JSON from the model output (with fallback to bare JSON)
-4. **Auto-inject params** — adds `sessionId`, `entityId`, and `zoneId` to the tool call args (hidden from the model to reduce prompt complexity)
-5. **Execute via MCP** — calls the game tool through the MCP session
-6. **Process result** — auto-extracts memory facts, truncates the response, and feeds it back as the next user message
-7. **Policy check** — every 100 cycles, evaluates whether to keep, rewrite, explore, or revert the strategy
+### UI Dashboard
 
-The model only sees ~30 core gameplay tools (filtered by `CORE_TOOL_PREFIXES`) out of the full MCP tool set, keeping the prompt focused for the 7B model.
+| Tab | What You See |
+|-----|-------------|
+| 🗺 World Map | SpriteKit tile map with live agent position, zone labels, POIs |
+| 🎮 Play Game | Full authenticated WKWebView game client |
+| 📜 Live Log | Real-time scrolling log from `AgentRunner.onLog` |
+| 🌍 Zones | Visited zones with mob/resource counts |
+| 📊 Performance | Kills · Deaths · XP · Gold · Quests |
+| 🧠 Policy | Current strategy + RL score history |
 
-### Memory System
+### Authenticated WebView
 
-Memory is stored in `.memory.json` with these sections:
+The **Play Game** tab opens a `WKWebView` with credentials injected before any page JS runs:
 
-| Section | Purpose | Limit |
-|---------|---------|-------|
-| `facts` | Character state (level, HP, gold, zone, gear) | 20 entries |
-| `quests` | Active and completed quest tracking | — |
-| `zones` | Explored zones with mob/resource/player counts | 15 zones |
-| `strategies` | Agent-learned gameplay tips | 15 entries |
-| `inventory_notes` | Notable items and crafting materials | 10 entries |
-| `journal` | Timestamped event log | 30 entries |
-| `stats` | Lifetime totals (kills, deaths, XP, gold, sessions) | — |
-| `policy_history` | Strategy rewrite log with scores and deltas | 20 entries |
+```javascript
+// WKUserScript runs at document start
+localStorage.setItem('walletAddress', '0x...')
+localStorage.setItem('authToken',     'eyJ...')  // JWT
+localStorage.setItem('walletProvider','swift-native')
+```
 
-Memory is **auto-extracted** from tool results — `get_my_status` updates facts, `grind_mobs`/`fight_until_dead` update combat stats, `scan_zone` updates zone info, and quest tools track quest progress. The agent can also manually write memories via a local `remember` pseudo-tool.
+The web app reads these on load and treats the session as authenticated — no redirect, no OAuth flow.
+
+---
+
+## ⚡ NVIDIA / Cloud Stack
+
+<div align="center">
+<img src="docs/assets/worldofgeneva-logo.png" alt="World of Geneva Logo" width="40%"/>
+</div>
+
+<br/>
+
+The cloud stack runs the same game loop on GPU hardware via [Modal](https://modal.com), collecting gameplay trajectories for RL fine-tuning.
+
+### Files
+
+```
+mistral/
+├── app_nvidia.py          ← GPU agent: HuggingFace + bitsandbytes 4-bit
+├── modal_runner.py        ← Modal functions: run_agent / run_training / run_eval
+├── trajectory_logger.py   ← Training data collector + Firebase upload
+└── wandb_logger.py        ← Weights & Biases telemetry
+```
+
+### 8 Parallel Agents — One Per Zone
+
+```python
+AGENT_ZONES = [
+    "village-square",    # agent 0   "wild-meadow",       # agent 1
+    "dark-forest",       # agent 2   "auroral-plains",    # agent 3
+    "emerald-woods",     # agent 4   "viridian-range",    # agent 5
+    "moondancer-glade",  # agent 6   "felsrock-citadel",  # agent 7
+]
+```
+
+Each agent has its own wallet + memory on a persistent Modal volume. Deploy all 8 with:
+
+```bash
+modal run modal_runner.py
+```
+
+| Function | GPU | Purpose |
+|---|---|---|
+| `run_agent` | H100 80GB | 24/7 game loop; collects trajectories |
+| `run_training` | H100 80GB | LoRA fine-tuning on JSONL trajectories |
+| `run_eval` | A100 40GB | Base model vs fine-tuned comparison |
+
+### Trajectory Collection
+
+Every game cycle is captured as a training example:
+
+```json
+{
+  "input":      "<|im_start|>system ... ChatML prompt ...",
+  "output":     "raw model response",
+  "tool_call":  {"name": "fight_mob", "arguments": {"mobId": "skeleton-1"}},
+  "mcp_result": "Defeated skeleton-1. +120 XP, +8 gold.",
+  "reward": {
+    "gold_delta": 8,   "xp_delta": 120,
+    "quest_delta": 0,  "death_delta": 0,
+    "composite_score": 36.0
+  }
+}
+```
+
+Records upload to **Firebase Storage** every 5 records — no data lost on container crash.
+
+---
+
+## 📈 RL Performance
+
+*Base model vs fine-tuned checkpoint — measured across 1 000-cycle eval runs.*
+
+<div align="center">
+
+<table>
+<tr>
+<td><img src="docs/assets/xp-comparison.png" alt="XP Comparison"/></td>
+<td><img src="docs/assets/gold-comparison.png" alt="Gold Comparison"/></td>
+</tr>
+<tr>
+<td><img src="docs/assets/quests-comparison.png" alt="Quests Comparison"/></td>
+<td><img src="docs/assets/kills-comparison.png" alt="Kills Comparison"/></td>
+</tr>
+</table>
+
+</div>
+
+### Reward Weights
+
+| Signal | Weight | Rationale |
+|---|---|---|
+| <img src="docs/assets/quest.png" height="18"/> Quest completed | **+50.0** | Primary objective |
+| <img src="docs/assets/gold.png" height="18"/> Gold earned | **+3.0** | Core economy |
+| <img src="docs/assets/level.png" height="18"/> XP gained | **+0.1** | Progression |
+| <img src="docs/assets/heart.png" height="18"/> Death | **−10.0** | Penalise reckless play |
+| 🗺 New zone | **+5.0** | Encourage exploration |
 
 ### Policy Loop
 
 Every 100 cycles the `PolicyEvaluator` runs:
 
-1. **Snapshot** — captures current gold, XP, kills, deaths, quests completed
-2. **Delta** — computes the difference from the previous snapshot
-3. **Score** — weighted sum: `gold*3 + quests*50 + xp*0.1 + deaths*(-10)`
-4. **EMA update** — exponential moving average (alpha=0.3) tracks performance trend
-5. **Decision** — one of four actions:
-   - **keep** (85%) — score is good and not declining
-   - **explore** (15%) — epsilon-greedy random rewrite even when performing well
-   - **adopt** — score is below threshold, generate a new strategy via meta-prompt
-   - **revert** — 2+ consecutive declining windows, roll back to the best-ever strategy
-6. **Meta-prompt** — if adopting/exploring, builds a rich prompt with performance deltas, character state, tool distribution, journal entries, and recent strategy history, then asks the LLM to write a new strategy in 2-4 sentences
-7. **Apply** — updates memory, rewrites the system prompt, and logs to W&B
+```
+score = gold×3 + quests×50 + xp×0.1 + deaths×(−10) + zones×5
 
-### Telemetry
+EMA(α=0.3) → trend
 
-All telemetry is logged to W&B under the `wog-agent` project with namespaced metrics:
+   ┌─ keep    (85%) — score healthy
+   ├─ explore (15%) — epsilon-greedy rewrite
+   ├─ adopt        — score below threshold → meta-prompt rewrites strategy
+   └─ revert       — 2+ declining windows → roll back to best-ever
+```
 
-| Namespace | Metrics |
-|-----------|---------|
-| `gameplay/` | total_kills, total_deaths, total_xp, total_gold_earned, gold_balance, quests_completed, quests_active |
-| `system/` | inference_time_s, context_length, cycle, had_error, journal_entries |
-| `tools/` | tool_name, total_calls, distribution bar chart (every 50 cycles) |
-| `policy/` | improvement_score, ema_score, action, update_cycle, strategy history table |
-| `errors/` | cycle, type, message |
+---
 
-W&B is optional — if `wandb` is not installed, all logging functions gracefully no-op.
+## 🚀 Quick Start
 
-## Configuration
+### macOS Native Client
 
-Key constants in `app.py`:
+> Requires Apple Silicon Mac · Xcode 16+ · macOS 15+
+
+```bash
+git clone https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git
+open Frontend/Agent/Agent.xcodeproj
+# ⌘R to build and run
+```
+
+1. Tap **Forge New Seal** → wallet generated and stored in Keychain
+2. Choose your race and class
+3. Tap **PLAY** → model loads, agent starts automatically
+
+### NVIDIA Cloud Stack
+
+> Requires [Modal](https://modal.com) account · W&B account (optional)
+
+```bash
+cd mistral
+pip install modal wandb firebase-admin
+modal setup
+
+# One-time secrets
+modal secret create wandb-secret WANDB_API_KEY=<key>
+modal secret create firebase-admin \
+  FIREBASE_SERVICE_ACCOUNT_JSON='<json>' \
+  FIREBASE_STORAGE_BUCKET='<bucket>'
+
+# Launch 8 parallel agents
+modal run modal_runner.py
+
+# Fine-tune on collected trajectories
+modal run modal_runner.py::run_training
+
+# Evaluate
+modal run modal_runner.py::run_eval
+```
+
+---
+
+## ⚙️ Configuration
+
+### Swift (AgentRunner.swift)
 
 | Constant | Default | Description |
-|----------|---------|-------------|
-| `MODEL_ID` | `mlx-community/Hermes-2-Pro-Mistral-7B-8bit` | MLX model to load |
-| `TICK_INTERVAL` | `3` | Seconds between game loop cycles |
-| `MAX_HISTORY` | `20` | Conversation messages to keep (plus system prompt) |
-| `MAX_RESPONSE_CHARS` | `1500` | Max tool response length fed back to the model |
-| `MAX_NO_TOOL_RETRIES` | `3` | No-tool cycles before context reset |
+|---|---|---|
+| `tickInterval` | 3 s | Game loop cycle interval |
+| `maxResponseChars` | 1500 | Max tool response fed to model |
+| `maxNoToolRetries` | 3 | Failed cycles before hard reset |
+| `memoryRefreshInterval` | 10 | Cycles between session rebuilds |
+| `maxToolsChars` | 3000 | Tool block cap in system prompt |
 
-Key constants in `policy.py`:
+### Python (app_nvidia.py)
 
 | Constant | Default | Description |
-|----------|---------|-------------|
-| `eval_interval` | `100` | Cycles between policy evaluations |
-| `_WEIGHT_GOLD` | `3` | Score weight for gold earned |
-| `_WEIGHT_QUESTS` | `50` | Score weight per quest completed |
-| `_WEIGHT_XP` | `0.1` | Score weight for XP gained |
-| `_WEIGHT_DEATHS` | `-10` | Score penalty per death |
-| `_ADOPT_THRESHOLD` | `30.0` | Score below which a new strategy is always tried |
-| `_EPSILON` | `0.15` | Exploration rate when performing well |
-| `_EMA_ALPHA` | `0.3` | EMA smoothing factor for score tracking |
+|---|---|---|
+| `MODEL_ID` | `Hermes-2-Pro-Mistral-7B` | HuggingFace model |
+| `TICK_INTERVAL` | 3 s | Game loop cycle interval |
+| `eval_interval` | 100 | Cycles between policy evaluations |
+| `_EPSILON` | 0.15 | Strategy exploration rate |
+| `_EMA_ALPHA` | 0.3 | Score smoothing factor |
 
-## License
+---
 
-MIT
+<div align="center">
+
+<img src="docs/assets/wog-logo.png" alt="WoG Logo" width="80"/>
+
+*Built with ❤️ on Apple Silicon and H100s*
+
+**MIT License**
+
+</div>
