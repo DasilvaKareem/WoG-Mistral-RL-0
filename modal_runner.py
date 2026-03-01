@@ -152,7 +152,7 @@ def run_agent(agent_id: int = 0):
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
 )
-def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
+def run_training(epochs: int = 3, lr: float = 1e-5, lora_rank: int = 8):
     """Fine-tune with LoRA on collected trajectories from all agents."""
     import torch
     print(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -173,9 +173,10 @@ def run_training(iters: int = 200, lr: float = 1e-5, lora_rank: int = 8):
     proc = subprocess.Popen(
         [
             "python", "train_lora_nvidia.py",
-            "--iters", str(iters),
+            "--epochs", str(epochs),
             "--lr", str(lr),
             "--lora-rank", str(lora_rank),
+            "--load-in-4bit",
             "--data", "data",
         ],
         stdout=subprocess.PIPE,
