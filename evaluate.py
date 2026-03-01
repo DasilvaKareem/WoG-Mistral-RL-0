@@ -1,17 +1,25 @@
 """
 Evaluation script: base model vs LoRA fine-tuned model.
 
-Uses Weave to run side-by-side evaluation with custom scorers
-for tool call validity, selection accuracy, and argument completeness.
+Evaluates on TWO axes:
+  1. Tool-calling quality (offline, from validation data)
+     - Tool call validity, selection accuracy, argument completeness
+  2. Gameplay performance (from trajectory data per model)
+     - XP earned, kills, quests completed, deaths, gold, inference time
+     - Broken down by quest difficulty
 
 Usage:
     python evaluate.py [--adapter-path adapters] [--data data/valid.jsonl]
+                       [--trajectories data/raw]
 """
 
 import argparse
+import glob
 import json
+import os
 import re
 import asyncio
+from collections import Counter, defaultdict
 from typing import Any
 
 import weave
@@ -163,8 +171,99 @@ def load_eval_dataset(path: str) -> list[dict]:
     return examples
 
 
-async def run_evaluation(agent: WoGAgent, dataset: list[dict], label: str) -> dict:
-    """Run evaluation on dataset and collect scores."""
+# ── Gameplay metrics from trajectory data ──
+
+def load_trajectories(input_dir: str) -> list[dict]:
+    """Load all JSONL trajectory files."""
+    records = []
+    for path in sorted(glob.glob(os.path.join(input_dir, "traj_*.jsonl"))):
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    return records
+
+
+def compute_gameplay_metrics(trajectories: list[dict]) -> dict:
+    """Aggregate gameplay metrics from trajectory records.
+
+    Returns per-model stats on XP, kills, quests, deaths, gold, inference time,
+    and per-difficulty breakdowns.
+    """
+    if not trajectories:
+        return {}
+
+    total_cycles = len(trajectories)
+    signals_sum = defaultdict(float)
+    tool_counts = Counter()
+    inference_times = []
+    difficulty_stats = defaultdict(lambda: {"count": 0, "xp": 0, "gold": 0, "times": []})
+
+    for r in trajectories:
+        signals = r.get("reward_signals", {})
+        signals_sum["xp"] += signals.get("xp_delta", 0)
+        signals_sum["gold"] += signals.get("gold_delta", 0)
+        signals_sum["kills"] += signals.get("kills_delta", 0)
+        signals_sum["deaths"] += signals.get("deaths_delta", 0)
+        signals_sum["quests_completed"] += signals.get("quests_completed_delta", 0)
+        signals_sum["quest_xp"] += signals.get("quest_xp_delta", 0)
+        signals_sum["quest_gold"] += signals.get("quest_gold_delta", 0)
+        signals_sum["zones_discovered"] += signals.get("zones_discovered_delta", 0)
+        signals_sum["zone_transitions"] += signals.get("zone_transitions_delta", 0)
+        signals_sum["reward"] += r.get("reward", 0.0)
+
+        tool_counts[r.get("tool_name", "none")] += 1
+        inf_t = r.get("inference_time")
+        if inf_t is not None:
+            inference_times.append(inf_t)
+
+        # Per-difficulty
+        diff = signals.get("quest_difficulty")
+        if diff and signals.get("quests_completed_delta", 0) > 0:
+            diff = str(diff)
+            difficulty_stats[diff]["count"] += 1
+            difficulty_stats[diff]["xp"] += signals.get("quest_xp_delta", 0)
+            difficulty_stats[diff]["gold"] += signals.get("quest_gold_delta", 0)
+            qt = signals.get("quest_completion_time_s")
+            if qt is not None:
+                difficulty_stats[diff]["times"].append(qt)
+
+    avg_inf = sum(inference_times) / len(inference_times) if inference_times else 0
+
+    return {
+        "total_cycles": total_cycles,
+        "total_xp": signals_sum["xp"],
+        "total_kills": signals_sum["kills"],
+        "total_deaths": signals_sum["deaths"],
+        "total_gold": signals_sum["gold"],
+        "total_quests_completed": signals_sum["quests_completed"],
+        "total_quest_xp": signals_sum["quest_xp"],
+        "total_quest_gold": signals_sum["quest_gold"],
+        "total_zones_discovered": signals_sum["zones_discovered"],
+        "total_reward": signals_sum["reward"],
+        "xp_per_cycle": signals_sum["xp"] / max(total_cycles, 1),
+        "kills_per_cycle": signals_sum["kills"] / max(total_cycles, 1),
+        "gold_per_cycle": signals_sum["gold"] / max(total_cycles, 1),
+        "quests_per_cycle": signals_sum["quests_completed"] / max(total_cycles, 1),
+        "deaths_per_cycle": signals_sum["deaths"] / max(total_cycles, 1),
+        "reward_per_cycle": signals_sum["reward"] / max(total_cycles, 1),
+        "avg_inference_time_s": avg_inf,
+        "tool_distribution": dict(tool_counts.most_common(15)),
+        "quests_by_difficulty": {
+            d: {
+                "count": data["count"],
+                "total_xp": data["xp"],
+                "total_gold": data["gold"],
+                "avg_time_s": sum(data["times"]) / len(data["times"]) if data["times"] else 0,
+            }
+            for d, data in sorted(difficulty_stats.items())
+        },
+    }
+
+
+async def run_tool_eval(agent: WoGAgent, dataset: list[dict], label: str) -> dict:
+    """Run tool-calling evaluation on dataset and collect scores."""
     results = {
         "label": label,
         "total": len(dataset),
@@ -212,86 +311,147 @@ async def main():
     parser.add_argument("--base-model", default="mlx-community/Hermes-2-Pro-Mistral-7B-8bit")
     parser.add_argument("--adapter-path", default="adapters", help="Path to LoRA adapter")
     parser.add_argument("--data", default="data/valid.jsonl", help="Validation dataset")
+    parser.add_argument("--trajectories", default="data/raw", help="Trajectory data directory")
     parser.add_argument("--max-examples", type=int, default=50, help="Max examples to evaluate")
     args = parser.parse_args()
 
     weave.init("wog-agent")
 
-    # Load dataset
-    print(f"Loading evaluation data from {args.data}...")
-    dataset = load_eval_dataset(args.data)
-    if len(dataset) > args.max_examples:
-        dataset = dataset[:args.max_examples]
-    print(f"  Evaluating on {len(dataset)} examples")
-
-    # Create both agents
-    print(f"\nLoading base model: {args.base_model}")
-    base_agent = WoGAgent(model_id=args.base_model, label="base")
-    base_agent.load_model()
-
-    print(f"Loading fine-tuned model: {args.base_model} + {args.adapter_path}")
-    ft_agent = WoGAgent(
-        model_id=args.base_model,
-        adapter_path=args.adapter_path,
-        label="fine-tuned",
-    )
-    ft_agent.load_model()
-
-    # Run evaluations
-    print("\nEvaluating base model...")
-    base_results = await run_evaluation(base_agent, dataset, "base")
-
-    print("\nEvaluating fine-tuned model...")
-    ft_results = await run_evaluation(ft_agent, dataset, "fine-tuned")
-
-    # Print comparison
-    print("\n" + "=" * 60)
-    print("EVALUATION RESULTS")
+    # ── Part 1: Gameplay metrics from trajectories ──
     print("=" * 60)
-    print(f"{'Metric':<30} {'Base':>10} {'Fine-tuned':>12} {'Delta':>10}")
-    print("-" * 62)
-
-    metrics = [
-        ("Tool Call Valid Rate", "tool_call_valid_rate"),
-        ("Tool Selection Accuracy", "tool_selection_accuracy"),
-        ("Argument Completeness", "argument_completeness_avg"),
-        ("Has Tool Tags Rate", "has_tool_tags_rate"),
-    ]
-
-    for display_name, key in metrics:
-        base_val = base_results[key]
-        ft_val = ft_results[key]
-        delta = ft_val - base_val
-        sign = "+" if delta >= 0 else ""
-        print(f"{display_name:<30} {base_val:>10.3f} {ft_val:>12.3f} {sign}{delta:>9.3f}")
-
+    print("PART 1: GAMEPLAY METRICS (from trajectory data)")
     print("=" * 60)
 
-    # Log to W&B via weave
+    trajectories = load_trajectories(args.trajectories)
+    if trajectories:
+        gameplay = compute_gameplay_metrics(trajectories)
+        print(f"\nTrajectory records: {gameplay['total_cycles']}")
+        print(f"\n{'Metric':<30} {'Value':>12} {'Per Cycle':>12}")
+        print("-" * 54)
+        gp_metrics = [
+            ("Total XP", "total_xp", "xp_per_cycle"),
+            ("Total Kills", "total_kills", "kills_per_cycle"),
+            ("Total Deaths", "total_deaths", "deaths_per_cycle"),
+            ("Total Gold", "total_gold", "gold_per_cycle"),
+            ("Quests Completed", "total_quests_completed", "quests_per_cycle"),
+            ("Composite Reward", "total_reward", "reward_per_cycle"),
+        ]
+        for display, total_key, rate_key in gp_metrics:
+            print(f"{display:<30} {gameplay[total_key]:>12.1f} {gameplay[rate_key]:>12.4f}")
+
+        print(f"\nAvg Inference Time: {gameplay['avg_inference_time_s']:.3f}s")
+
+        if gameplay["quests_by_difficulty"]:
+            print(f"\n{'Difficulty':<12} {'Count':>8} {'XP':>8} {'Gold':>8} {'Avg Time':>10}")
+            print("-" * 46)
+            for diff, data in gameplay["quests_by_difficulty"].items():
+                print(f"{diff:<12} {data['count']:>8} {data['total_xp']:>8.0f} "
+                      f"{data['total_gold']:>8.0f} {data['avg_time_s']:>9.1f}s")
+    else:
+        gameplay = {}
+        print("No trajectory data found. Run the agent first to collect data.")
+
+    # ── Part 2: Tool-calling quality (offline eval) ──
+    print(f"\n{'=' * 60}")
+    print("PART 2: TOOL-CALLING QUALITY (offline eval)")
+    print("=" * 60)
+
+    if not os.path.exists(args.data):
+        print(f"No validation data at {args.data}. Skipping tool eval.")
+        tool_results = {}
+    else:
+        dataset = load_eval_dataset(args.data)
+        if len(dataset) > args.max_examples:
+            dataset = dataset[:args.max_examples]
+        print(f"Evaluating on {len(dataset)} examples\n")
+
+        print(f"Loading base model: {args.base_model}")
+        base_agent = WoGAgent(model_id=args.base_model, label="base")
+        base_agent.load_model()
+
+        print(f"Loading fine-tuned model: {args.base_model} + {args.adapter_path}")
+        ft_agent = WoGAgent(
+            model_id=args.base_model,
+            adapter_path=args.adapter_path,
+            label="fine-tuned",
+        )
+        ft_agent.load_model()
+
+        print("\nEvaluating base model...")
+        base_results = await run_tool_eval(base_agent, dataset, "base")
+
+        print("\nEvaluating fine-tuned model...")
+        ft_results = await run_tool_eval(ft_agent, dataset, "fine-tuned")
+
+        print(f"\n{'Metric':<30} {'Base':>10} {'Fine-tuned':>12} {'Delta':>10}")
+        print("-" * 62)
+
+        tool_metrics = [
+            ("Tool Call Valid Rate", "tool_call_valid_rate"),
+            ("Tool Selection Accuracy", "tool_selection_accuracy"),
+            ("Argument Completeness", "argument_completeness_avg"),
+            ("Has Tool Tags Rate", "has_tool_tags_rate"),
+        ]
+
+        for display_name, key in tool_metrics:
+            base_val = base_results[key]
+            ft_val = ft_results[key]
+            delta = ft_val - base_val
+            sign = "+" if delta >= 0 else ""
+            print(f"{display_name:<30} {base_val:>10.3f} {ft_val:>12.3f} {sign}{delta:>9.3f}")
+
+        tool_results = {"base": base_results, "fine_tuned": ft_results}
+
+    # ── Log everything to W&B ──
+    print(f"\n{'=' * 60}")
+    print("LOGGING TO W&B")
+    print("=" * 60)
+
     import wandb
     run = wandb.init(project="wog-agent", job_type="evaluation")
 
-    comparison_table = wandb.Table(
-        columns=["model", "tool_call_valid_rate", "tool_selection_accuracy",
-                 "argument_completeness", "has_tool_tags_rate"],
-        data=[
-            ["base", base_results["tool_call_valid_rate"],
-             base_results["tool_selection_accuracy"],
-             base_results["argument_completeness_avg"],
-             base_results["has_tool_tags_rate"]],
-            ["fine-tuned", ft_results["tool_call_valid_rate"],
-             ft_results["tool_selection_accuracy"],
-             ft_results["argument_completeness_avg"],
-             ft_results["has_tool_tags_rate"]],
-        ],
-    )
-    run.log({"evaluation/comparison": comparison_table})
+    # Gameplay metrics
+    if gameplay:
+        for key in ["total_xp", "total_kills", "total_deaths", "total_gold",
+                     "total_quests_completed", "total_reward", "avg_inference_time_s",
+                     "xp_per_cycle", "kills_per_cycle", "gold_per_cycle",
+                     "quests_per_cycle", "deaths_per_cycle", "reward_per_cycle"]:
+            run.summary[f"gameplay/{key}"] = gameplay.get(key, 0)
 
-    for key in ["tool_call_valid_rate", "tool_selection_accuracy",
-                "argument_completeness_avg", "has_tool_tags_rate"]:
-        run.summary[f"base/{key}"] = base_results[key]
-        run.summary[f"fine_tuned/{key}"] = ft_results[key]
-        run.summary[f"delta/{key}"] = ft_results[key] - base_results[key]
+        # Per-difficulty table
+        if gameplay.get("quests_by_difficulty"):
+            diff_table = wandb.Table(
+                columns=["difficulty", "count", "total_xp", "total_gold", "avg_time_s"],
+                data=[
+                    [d, data["count"], data["total_xp"], data["total_gold"], data["avg_time_s"]]
+                    for d, data in gameplay["quests_by_difficulty"].items()
+                ],
+            )
+            run.log({"gameplay/quests_by_difficulty": diff_table})
+
+    # Tool-calling comparison
+    if tool_results:
+        comparison_table = wandb.Table(
+            columns=["model", "tool_call_valid_rate", "tool_selection_accuracy",
+                     "argument_completeness", "has_tool_tags_rate"],
+            data=[
+                ["base", tool_results["base"]["tool_call_valid_rate"],
+                 tool_results["base"]["tool_selection_accuracy"],
+                 tool_results["base"]["argument_completeness_avg"],
+                 tool_results["base"]["has_tool_tags_rate"]],
+                ["fine-tuned", tool_results["fine_tuned"]["tool_call_valid_rate"],
+                 tool_results["fine_tuned"]["tool_selection_accuracy"],
+                 tool_results["fine_tuned"]["argument_completeness_avg"],
+                 tool_results["fine_tuned"]["has_tool_tags_rate"]],
+            ],
+        )
+        run.log({"evaluation/tool_calling_comparison": comparison_table})
+
+        for key in ["tool_call_valid_rate", "tool_selection_accuracy",
+                     "argument_completeness_avg", "has_tool_tags_rate"]:
+            run.summary[f"base/{key}"] = tool_results["base"][key]
+            run.summary[f"fine_tuned/{key}"] = tool_results["fine_tuned"][key]
+            run.summary[f"delta/{key}"] = tool_results["fine_tuned"][key] - tool_results["base"][key]
 
     run.finish()
     print("\nEvaluation logged to W&B.")
