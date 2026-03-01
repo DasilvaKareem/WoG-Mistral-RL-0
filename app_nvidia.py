@@ -112,68 +112,98 @@ async def authenticate(wallet: Account) -> str:
         return data["token"]
 
 
+async def _lookup_character(client: httpx.AsyncClient, wallet_address: str, headers: dict) -> dict | None:
+    """Return {entityId, zoneId, characterName} if wallet already has a character, else None."""
+    try:
+        r = await client.get(f"{SHARD_URL}/character/{wallet_address}", headers=headers)
+        if r.status_code != 200:
+            return None
+        char_info = r.json()
+        live = char_info.get("liveEntity")
+        chars = char_info.get("characters", [])
+        if live:
+            return {
+                "entityId": live.get("entityId", live.get("id", "")),
+                "zoneId": live.get("zoneId", live.get("zone", "village-square")),
+                "characterName": chars[0]["name"] if chars else "?",
+            }
+        if chars:
+            return {
+                "entityId": chars[0].get("tokenId", ""),
+                "zoneId": "village-square",
+                "characterName": chars[0]["name"],
+            }
+    except Exception as e:
+        print(f"Character lookup error: {e}")
+    return None
+
+
 async def register_and_deploy(wallet: Account, token: str) -> dict:
-    """Register wallet, create character if needed, and deploy agent."""
+    """Register wallet, create character if needed, and deploy agent.
+
+    Fast path: if the wallet already has a character just deploy it directly,
+    skipping the slow blockchain registration/minting steps that cause 524s.
+    """
     timeout = httpx.Timeout(connect=30, read=300, write=30, pool=30)
     async with httpx.AsyncClient(timeout=timeout) as client:
         headers = {"Authorization": f"Bearer {token}"}
 
-        r = await client.post(f"{SHARD_URL}/wallet/register", json={
-            "walletAddress": wallet.address,
-        })
-        if r.status_code == 200:
-            print(f"Wallet registered: {r.json()}")
+        # ── Fast path: existing character → skip registration ──────────────
+        existing = await _lookup_character(client, wallet.address, headers)
+        if existing:
+            print(f"Existing character found: {existing['characterName']} — skipping registration")
         else:
-            print(f"Wallet register: {r.status_code} — {r.text}")
+            # ── Slow path: new wallet → register + mint (blockchain ops) ───
+            print("New wallet — registering and creating character...")
+            try:
+                r = await client.post(f"{SHARD_URL}/wallet/register", json={
+                    "walletAddress": wallet.address,
+                })
+                print(f"Wallet register: {r.status_code}")
+            except (httpx.ReadTimeout, httpx.HTTPError) as e:
+                print(f"Wallet register error (non-fatal): {e}")
 
-        # Create character with retry on timeout
+            for attempt in range(5):
+                try:
+                    r = await client.post(f"{SHARD_URL}/character/create", json={
+                        "walletAddress": wallet.address,
+                        "name": "HermesAgent",
+                        "race": "human",
+                        "className": "warrior",
+                    }, headers=headers)
+                    if r.status_code == 200:
+                        print(f"Character created: {r.json().get('character', {}).get('name', '?')}")
+                    else:
+                        print(f"Character create: {r.status_code} (may already exist)")
+                    break
+                except (httpx.ReadTimeout, httpx.HTTPError) as e:
+                    wait = 2 ** attempt
+                    print(f"character/create error ({attempt+1}/5): {e} — retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+
+        # ── Deploy (try up to 3 times) ──────────────────────────────────────
         for attempt in range(3):
             try:
-                r = await client.post(f"{SHARD_URL}/character/create", json={
+                r = await client.post(f"{SHARD_URL}/agent/deploy", json={
                     "walletAddress": wallet.address,
-                    "name": "HermesAgent",
-                    "race": "human",
-                    "className": "warrior",
                 }, headers=headers)
-                break
-            except httpx.ReadTimeout:
-                if attempt == 2:
-                    raise
-                print(f"character/create timed out, retrying ({attempt + 1}/3)...")
-                await asyncio.sleep(5)
-        if r.status_code == 200:
-            char = r.json()
-            print(f"Character created: {char.get('character', {}).get('name', '?')}")
-        else:
-            print(f"Character create: {r.status_code} — {r.text[:200]} (may already exist)")
+                if r.status_code == 200:
+                    deploy = r.json()
+                    print(f"Agent deployed: entity={deploy['entityId']} zone={deploy['zoneId']} "
+                          f"char={deploy.get('characterName', '?')}")
+                    return deploy
+                print(f"Deploy attempt {attempt+1}: {r.status_code} — {r.text[:200]}")
+            except (httpx.ReadTimeout, httpx.HTTPError) as e:
+                print(f"Deploy attempt {attempt+1} error: {e}")
+            await asyncio.sleep(3)
 
-        r = await client.post(f"{SHARD_URL}/agent/deploy", json={
-            "walletAddress": wallet.address,
-        }, headers=headers)
-        if r.status_code == 200:
-            deploy = r.json()
-            print(f"Agent deployed: entity={deploy['entityId']} zone={deploy['zoneId']} "
-                  f"char={deploy.get('characterName', '?')}")
-            return deploy
-
-        print(f"Deploy: {r.status_code} — {r.text[:200]}")
-        print("Looking up existing character...")
-        r = await client.get(f"{SHARD_URL}/character/{wallet.address}", headers=headers)
-        r.raise_for_status()
-        char_info = r.json()
-        chars = char_info.get("characters", [])
-        live = char_info.get("liveEntity")
-        if live:
-            entity_id = live.get("entityId", live.get("id", ""))
-            zone_id = live.get("zoneId", live.get("zone", "village-square"))
-        elif chars:
-            entity_id = chars[0].get("tokenId", "")
-            zone_id = "village-square"
-        else:
-            raise RuntimeError("No character found and deploy failed")
-        name = chars[0]["name"] if chars else "?"
-        print(f"Found existing character: {name} entity={entity_id} zone={zone_id}")
-        return {"entityId": entity_id, "zoneId": zone_id, "characterName": name}
+        # ── Final fallback: re-lookup character after deploy attempts ───────
+        print("Falling back to character lookup...")
+        info = await _lookup_character(client, wallet.address, headers)
+        if info:
+            print(f"Using character: {info['characterName']} entity={info['entityId']}")
+            return info
+        raise RuntimeError("Could not deploy or find character — check shard logs")
 
 
 # Core tools a 7B model can handle — skip auth/admin/niche tools
