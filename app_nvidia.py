@@ -540,6 +540,8 @@ async def main():
             consecutive_errors = 0
             consecutive_no_tool = 0
             MEMORY_REFRESH_INTERVAL = 10
+            last_error_result: str = ""
+            consecutive_same_error = 0
 
             while True:
                 cycle += 1
@@ -600,6 +602,35 @@ async def main():
 
                     name = tool_call.get("name", "")
                     args = tool_call.get("arguments", {})
+
+                    # Correct commonly hallucinated tool names
+                    TOOL_ALIASES = {
+                        "get_active_quest": "quests_get_active",
+                        "get_quests": "quests_get_catalog",
+                        "accept_quest": "quests_accept",
+                        "complete_quest": "quests_complete",
+                        "get_quest_catalog": "quests_get_catalog",
+                        "list_quests": "quests_get_catalog",
+                        "get_status": "get_my_status",
+                        "check_status": "get_my_status",
+                        "get_inventory": "items_get_inventory",
+                        "list_inventory": "items_get_inventory",
+                        "learn_technique": "technique_learn",
+                        "list_techniques": "technique_list_catalog",
+                        "get_equipment": "equipment_get",
+                        "equip_item": "equipment_equip",
+                        "buy_item": "shop_buy_item",
+                        "get_shop": "shop_get_catalog",
+                        "list_shop": "shop_get_catalog",
+                        "move_to": "navigate_to",
+                        "go_to_zone": "travel_to_zone",
+                    }
+                    if name in TOOL_ALIASES:
+                        corrected = TOOL_ALIASES[name]
+                        print(f"[cycle {cycle}] Tool alias: {name} → {corrected}")
+                        name = corrected
+                        tool_call["name"] = name
+
                     print(f"[cycle {cycle}] {name}({json.dumps(args, separators=(',', ':'))})")
 
                     # Handle local "remember" pseudo-tool
@@ -633,6 +664,30 @@ async def main():
 
                     preview = result_text[:300].replace("\n", " ")
                     print(f"  -> {preview}")
+
+                    # Detect stuck loops: same error 3+ times in a row → inject correction
+                    error_sig = result_text[:120] if ("error" in result_text.lower() or "not found" in result_text.lower()) else ""
+                    if error_sig and error_sig == last_error_result:
+                        consecutive_same_error += 1
+                    else:
+                        consecutive_same_error = 0
+                        last_error_result = error_sig
+
+                    if consecutive_same_error >= 3:
+                        print(f"[cycle {cycle}] Stuck loop detected ({consecutive_same_error}x same error), injecting correction...")
+                        messages.append({"role": "assistant", "content": response})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"<tool_response>\n{result_text[:500]}\n</tool_response>\n\n"
+                                "You are stuck in a loop getting the same error repeatedly. STOP what you were doing. "
+                                "Call get_my_status to reset your context, then pick a completely different action."
+                            ),
+                        })
+                        consecutive_same_error = 0
+                        last_error_result = ""
+                        await asyncio.sleep(TICK_INTERVAL)
+                        continue
 
                     process_tool_result(mem, name, result_text)
 

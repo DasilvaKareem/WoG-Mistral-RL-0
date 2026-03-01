@@ -37,10 +37,27 @@ def _init_firebase_bucket():
         import firebase_admin
         from firebase_admin import credentials, storage
 
-        sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
-        bucket_name = os.environ.get("FIREBASE_STORAGE_BUCKET")
+        # Try multiple possible key names across different secrets
+        sa_json = (
+            os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+            or os.environ.get("FIREBASE_SERVICE_ACCOUNT")
+            or os.environ.get("SERVICE_ACCOUNT_JSON")
+            or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+            or os.environ.get("FIREBASE_CREDENTIALS")
+        )
+        bucket_name = (
+            os.environ.get("FIREBASE_STORAGE_BUCKET")
+            or os.environ.get("STORAGE_BUCKET")
+            or os.environ.get("FIREBASE_BUCKET")
+            or os.environ.get("GCS_BUCKET")
+        )
+
+        # Debug: print which firebase-related env vars are present
+        firebase_keys = [k for k in os.environ if "FIREBASE" in k.upper() or "GCS" in k.upper() or "GOOGLE" in k.upper()]
+        print(f"[trajectory] Firebase-related env vars found: {firebase_keys}")
+
         if not sa_json or not bucket_name:
-            print("[trajectory] Firebase env vars missing — local-only logging")
+            print(f"[trajectory] Firebase env vars missing (sa_json={'set' if sa_json else 'MISSING'}, bucket={'set' if bucket_name else 'MISSING'}) — local-only logging")
             return None
 
         import base64
