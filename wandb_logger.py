@@ -97,12 +97,28 @@ def log_cycle(
     except Exception:
         pass
 
+    # Log per-difficulty quest metrics
+    by_diff = stats.get("quests_by_difficulty", {})
+    for diff, data in by_diff.items():
+        avg_t = _avg(data.get("times", []))
+        try:
+            _run.log({
+                f"quests_by_difficulty/{diff}/count": data.get("count", 0),
+                f"quests_by_difficulty/{diff}/total_xp": data.get("total_xp", 0),
+                f"quests_by_difficulty/{diff}/total_gold": data.get("total_gold", 0),
+                f"quests_by_difficulty/{diff}/avg_time_s": avg_t,
+            }, step=cycle)
+        except Exception:
+            pass
+
     # Log distribution charts every 50 cycles
     if cycle % 50 == 0:
         if _tool_counts:
             _log_tool_distribution(cycle)
         if _zone_counts:
             _log_zone_distribution(cycle)
+        if by_diff:
+            _log_quest_difficulty_distribution(cycle, by_diff)
 
 
 def _log_tool_distribution(cycle: int) -> None:
@@ -133,6 +149,53 @@ def _log_zone_distribution(cycle: int) -> None:
         _run.log({
             "movement/zone_distribution": wandb.plot.bar(
                 table, "zone", "cycles_spent", title=f"Zone occupancy (cycle {cycle})"
+            ),
+        }, step=cycle)
+    except Exception:
+        pass
+
+
+def _log_quest_difficulty_distribution(cycle: int, by_diff: dict) -> None:
+    """Log quest count and avg time per difficulty as W&B bar charts."""
+    if _run is None:
+        return
+    try:
+        # Quest count by difficulty
+        count_table = wandb.Table(
+            columns=["difficulty", "quests_completed"],
+            data=[[d, data.get("count", 0)] for d, data in sorted(by_diff.items())],
+        )
+        _run.log({
+            "quests/difficulty_counts": wandb.plot.bar(
+                count_table, "difficulty", "quests_completed",
+                title=f"Quests by Difficulty (cycle {cycle})",
+            ),
+        }, step=cycle)
+
+        # Avg time by difficulty
+        time_data = [
+            [d, _avg(data.get("times", []))]
+            for d, data in sorted(by_diff.items())
+            if data.get("times")
+        ]
+        if time_data:
+            time_table = wandb.Table(columns=["difficulty", "avg_time_s"], data=time_data)
+            _run.log({
+                "quests/difficulty_avg_time": wandb.plot.bar(
+                    time_table, "difficulty", "avg_time_s",
+                    title=f"Avg Quest Time by Difficulty (cycle {cycle})",
+                ),
+            }, step=cycle)
+
+        # XP per difficulty
+        xp_table = wandb.Table(
+            columns=["difficulty", "total_xp"],
+            data=[[d, data.get("total_xp", 0)] for d, data in sorted(by_diff.items())],
+        )
+        _run.log({
+            "quests/difficulty_xp": wandb.plot.bar(
+                xp_table, "difficulty", "total_xp",
+                title=f"XP by Difficulty (cycle {cycle})",
             ),
         }, step=cycle)
     except Exception:

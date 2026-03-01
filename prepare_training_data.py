@@ -114,9 +114,13 @@ def compute_stats(
     """Compute dataset statistics for logging."""
     tool_counts = Counter()
     zone_counts = Counter()
+    difficulty_counts = Counter()
+    difficulty_xp: dict[str, float] = {}
+    difficulty_times: dict[str, list[float]] = {}
     reward_sums = {"gold": 0, "xp": 0, "kills": 0, "quests": 0, "quest_gold": 0,
                    "quest_xp": 0, "zones_discovered": 0, "zone_transitions": 0}
     rewards_list = []
+    inference_by_difficulty: dict[str, list[float]] = {}
     for r in filtered:
         tool_counts[r.get("tool_name", "unknown")] += 1
         signals = r.get("reward_signals", {})
@@ -132,6 +136,20 @@ def compute_stats(
         zone = signals.get("zone_after") or signals.get("zone_before")
         if zone:
             zone_counts[zone] += 1
+
+        # Per-difficulty stats for quest completions
+        diff = signals.get("quest_difficulty")
+        if diff and signals.get("quests_completed_delta", 0) > 0:
+            diff = str(diff)
+            difficulty_counts[diff] += 1
+            difficulty_xp.setdefault(diff, 0.0)
+            difficulty_xp[diff] += signals.get("quest_xp_delta", 0)
+            qt = signals.get("quest_completion_time_s")
+            if qt is not None:
+                difficulty_times.setdefault(diff, []).append(qt)
+            inf_time = r.get("inference_time")
+            if inf_time is not None:
+                inference_by_difficulty.setdefault(diff, []).append(inf_time)
 
     rewards_list.sort()
     n = len(rewards_list)
@@ -160,6 +178,15 @@ def compute_stats(
         "total_quest_xp_in_data": reward_sums["quest_xp"],
         "total_zones_discovered_in_data": reward_sums["zones_discovered"],
         "total_zone_transitions_in_data": reward_sums["zone_transitions"],
+        # Per-difficulty breakdown
+        "quests_by_difficulty": dict(difficulty_counts.most_common()),
+        "xp_by_difficulty": difficulty_xp,
+        "avg_time_by_difficulty": {
+            d: sum(t) / len(t) for d, t in difficulty_times.items()
+        },
+        "avg_inference_by_difficulty": {
+            d: sum(t) / len(t) for d, t in inference_by_difficulty.items()
+        },
     }
 
 

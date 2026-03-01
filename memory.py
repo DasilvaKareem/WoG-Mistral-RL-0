@@ -48,6 +48,7 @@ def _default_memory() -> dict:
             "total_zone_transitions": 0,
             "zone_visit_counts": {},   # {zone_id: visit_count}
             "quest_completion_times": [],  # list of seconds per quest
+            "quests_by_difficulty": {},    # {difficulty: {count, total_xp, total_gold, times: []}}
             "sessions": 0,
             "first_seen": datetime.now().isoformat(),
         },
@@ -99,12 +100,21 @@ def memory_to_prompt(mem: dict) -> str:
 
     # Quest performance
     completion_times = mem.get("stats", {}).get("quest_completion_times", [])
-    if completion_times:
-        avg_time = sum(completion_times) / len(completion_times)
-        fastest = min(completion_times)
+    by_diff = mem.get("stats", {}).get("quests_by_difficulty", {})
+    if completion_times or by_diff:
         lines.append(f"\n### Quest Performance")
-        lines.append(f"- Avg completion: {avg_time:.0f}s | Fastest: {fastest:.0f}s | "
-                     f"Total completed: {len(quests.get('completed', []))}")
+        if completion_times:
+            avg_time = sum(completion_times) / len(completion_times)
+            fastest = min(completion_times)
+            lines.append(f"- Overall: avg {avg_time:.0f}s | fastest {fastest:.0f}s | "
+                         f"{len(quests.get('completed', []))} total")
+        if by_diff:
+            for diff, data in sorted(by_diff.items()):
+                avg_t = sum(data["times"]) / len(data["times"]) if data["times"] else 0
+                lines.append(
+                    f"- Diff {diff}: {data['count']} quests | "
+                    f"avg {avg_t:.0f}s | {data['total_xp']} XP | {data['total_gold']} gold"
+                )
 
     # Zones
     if mem.get("zones"):
@@ -446,6 +456,20 @@ def extract_from_quest(mem: dict, tool_name: str, result_text: str) -> None:
             mem["stats"]["quest_completion_times"] = mem["stats"]["quest_completion_times"][-MAX_QUEST_COMPLETION_TIMES:]
         mem["quests"]["completion_times"].append(completion_record)
         mem["quests"]["completion_times"] = mem["quests"]["completion_times"][-MAX_QUEST_COMPLETION_TIMES:]
+
+        # Per-difficulty aggregation
+        diff_key = str(difficulty) if difficulty else "unknown"
+        by_diff = mem["stats"].setdefault("quests_by_difficulty", {})
+        if diff_key not in by_diff:
+            by_diff[diff_key] = {"count": 0, "total_xp": 0, "total_gold": 0, "times": []}
+        by_diff[diff_key]["count"] += 1
+        if isinstance(xp_reward, (int, float)):
+            by_diff[diff_key]["total_xp"] += xp_reward
+        if isinstance(gold_reward, (int, float)):
+            by_diff[diff_key]["total_gold"] += gold_reward
+        if time_to_complete_s is not None:
+            by_diff[diff_key]["times"].append(round(time_to_complete_s, 1))
+            by_diff[diff_key]["times"] = by_diff[diff_key]["times"][-MAX_QUEST_COMPLETION_TIMES:]
 
         # Journal
         reward_str = ""

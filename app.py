@@ -566,6 +566,10 @@ async def main():
                     process_tool_result(mem, name, result_text)
 
                     # Log trajectory for fine-tuning
+                    # Get difficulty of most recent quest completion (if any this cycle)
+                    _comp_times = mem.get("quests", {}).get("completion_times", [])
+                    _last_diff = _comp_times[-1].get("difficulty") if _comp_times else None
+
                     traj_logger.end_cycle(
                         response=response,
                         tool_call=tool_call,
@@ -579,6 +583,7 @@ async def main():
                         zones_discovered=len(mem.get("stats", {}).get("zone_visit_counts", {})),
                         zone=mem.get("facts", {}).get("zone"),
                         quest_completion_times=mem.get("stats", {}).get("quest_completion_times", []),
+                        last_quest_difficulty=_last_diff,
                     )
 
                     # Sync zone_id when agent travels so future tool calls use the right zone

@@ -89,6 +89,7 @@ class TrajectoryLogger:
         zones_discovered: int = 0,
         zone: str | None = None,
         quest_completion_times: list[float] | None = None,
+        last_quest_difficulty: str | None = None,
     ) -> None:
         """Finish recording a cycle. Call after tool execution."""
         if self._current is None:
@@ -114,6 +115,7 @@ class TrajectoryLogger:
             "quest_gold_delta": stats_after.get("total_quests_gold", 0) - before.get("total_quests_gold", 0),
             "quest_xp_delta": stats_after.get("total_quests_xp", 0) - before.get("total_quests_xp", 0),
             "quest_completion_time_s": last_quest_time_s,
+            "quest_difficulty": last_quest_difficulty,
             # Exploration
             "zones_discovered_delta": zones_discovered - self._current["zones_discovered_before"],
             "zone_transitions_delta": (
