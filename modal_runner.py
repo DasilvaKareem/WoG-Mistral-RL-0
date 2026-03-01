@@ -306,6 +306,91 @@ def run_policy(epochs: int = 3, lr: float = 5e-6, lora_rank: int = 16):
                 print(f"[firebase] Upload failed (adapter safe in volume): {e}")
 
 
+# ── Live model comparison ───────────────────────────────────────────────────
+@app.function(
+    gpu="H100",
+    timeout=14400,          # 4 hours
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
+)
+def run_one_comparison_agent(variant: str, agent_id: int, cycles: int = 100, starting_gold: int = 500):
+    """Run one comparison agent (base / sft / policy). Launched in parallel by run_comparison."""
+    import torch, json as _json, firebase_admin
+    from firebase_admin import credentials, storage as fb_storage
+    print(f"[{variant}] GPU: {torch.cuda.get_device_name(0)}")
+
+    subprocess.run(["git", "clone",
+        "https://github.com/DasilvaKareem/WoG-Mistral-RL-0.git", "/app"], check=True)
+    os.chdir("/app")
+
+    # Restore wallet for this agent
+    _restore(agent_id)
+
+    # Download adapters from Firebase
+    sa = _json.loads(os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"])
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(
+            credentials.Certificate(sa),
+            {"storageBucket": os.environ["FIREBASE_STORAGE_BUCKET"]},
+        )
+    bucket = fb_storage.bucket()
+
+    adapter_path = None
+    if variant == "sft":
+        os.makedirs("/app/adapters/sft", exist_ok=True)
+        for blob in bucket.list_blobs(prefix="adapters/"):
+            # Only top-level adapter files (not checkpoints)
+            rel = blob.name[len("adapters/"):]
+            if "/" not in rel and rel:
+                local = f"/app/adapters/sft/{rel}"
+                blob.download_to_filename(local)
+        adapter_path = "/app/adapters/sft"
+        print(f"[{variant}] Downloaded SFT adapter")
+
+    elif variant == "policy":
+        os.makedirs("/app/adapters/policy", exist_ok=True)
+        for blob in bucket.list_blobs(prefix="adapters/policy/"):
+            rel = blob.name[len("adapters/policy/"):]
+            if rel:
+                local = f"/app/adapters/policy/{rel}"
+                os.makedirs(os.path.dirname(local), exist_ok=True)
+                blob.download_to_filename(local)
+        adapter_path = "/app/adapters/policy"
+        print(f"[{variant}] Downloaded policy adapter")
+
+    env = {
+        **os.environ,
+        "AGENT_ID": str(agent_id),
+        "WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
+    }
+    cmd = [
+        "python", "evaluate_comparison.py",
+        "--variant", variant,
+        "--cycles", str(cycles),
+        "--starting-gold", str(starting_gold),
+    ]
+    if adapter_path:
+        cmd += ["--adapter-path", adapter_path]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, cwd="/app", env=env)
+    for line in iter(proc.stdout.readline, ""):  # type: ignore[union-attr]
+        print(f"[{variant}] {line}", end="", flush=True)
+    proc.wait()
+
+
+@app.local_entrypoint()
+def run_comparison():
+    """Run base vs SFT vs policy in parallel — 100 cycles each, 500 starting gold."""
+    print("Launching 3-way comparison: base | sft | policy")
+    list(run_one_comparison_agent.starmap([
+        ("base",   0, 100, 500),
+        ("sft",    1, 100, 500),
+        ("policy", 2, 100, 500),
+    ]))
+    print("Comparison complete — check W&B for results")
+
+
 # ── Evaluation ──────────────────────────────────────────────────────────────
 @app.function(
     gpu="A100-40GB",
