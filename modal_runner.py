@@ -308,7 +308,7 @@ def run_policy(epochs: int = 3, lr: float = 5e-6, lora_rank: int = 16):
 
 # ── Live model comparison ───────────────────────────────────────────────────
 @app.function(
-    gpu="A10G",
+    gpu="A100-40GB",
     timeout=14400,          # 4 hours
     volumes={"/data": volume},
     secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("wog-firebase")],
