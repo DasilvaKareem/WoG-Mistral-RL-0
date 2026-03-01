@@ -98,10 +98,11 @@ class TrajectoryLogger:
     def __init__(self, output_dir: str = "data/raw", agent_id: str = "0"):
         self.output_dir = output_dir
         self.agent_id = agent_id
+        self.variant = os.environ.get("VARIANT", "base")
         os.makedirs(output_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.filename = f"traj_agent{agent_id}_{timestamp}.jsonl"
+        self.filename = f"traj_{self.variant}_agent{agent_id}_{timestamp}.jsonl"
         self.filepath = os.path.join(output_dir, self.filename)
         self._file = open(self.filepath, "a")
         self._current: dict | None = None
@@ -185,6 +186,7 @@ class TrajectoryLogger:
         record = {
             "cycle": self._current["cycle"],
             "timestamp": self._current["timestamp"],
+            "variant": self.variant,
             "messages": self._current["messages"],
             "prompt": self._current["prompt"],
             "response": response,
